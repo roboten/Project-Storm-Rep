@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35919.96 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Project Storm App", "Project Storm App\Project Storm App.vcxproj", "{DDEBC2A4-426C-451D-9A6B-85841F62B36E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Debug|x64.ActiveCfg = Debug|x64
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Debug|x64.Build.0 = Debug|x64
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Debug|x86.ActiveCfg = Debug|Win32
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Debug|x86.Build.0 = Debug|Win32
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Release|x64.ActiveCfg = Release|x64
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Release|x64.Build.0 = Release|x64
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Release|x86.ActiveCfg = Release|Win32
+		{DDEBC2A4-426C-451D-9A6B-85841F62B36E}.Release|x86.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {CB8DE5EF-6FDA-4B4A-964D-5935BA44A945}
+	EndGlobalSection
+EndGlobal
