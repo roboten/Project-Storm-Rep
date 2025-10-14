@@ -24,30 +24,12 @@ static lv_obj_t* t2;
 static lv_obj_t* t1_label;
 static lv_obj_t* t2_label;
 static lv_obj_t* splash_screen;  // temporary boot screen
-static bool t2_dark = false;     // start tile #2 in light mode
+static bool wifi_connected = false;  // track WiFi connection status
+static bool main_screen_loaded = false;  // track if main screen is loaded
+static bool splash_deleted = false;  // track if splash screen is deleted
 
 // Forward declaration for boot timer callback
 static void switch_to_main(lv_timer_t* timer);
-
-// --------------------------------------------------------------------
-// Theme/color utility
-// --------------------------------------------------------------------
-static void apply_tile_colors(lv_obj_t* tile, lv_obj_t* label, bool dark)
-{
-  lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(tile, dark ? lv_color_black() : lv_color_white(), 0);
-  lv_obj_set_style_text_color(label, dark ? lv_color_white() : lv_color_black(), 0);
-}
-
-// --------------------------------------------------------------------
-// Event: toggle color on tile #2 when tapped
-// --------------------------------------------------------------------
-static void on_tile2_clicked(lv_event_t* e)
-{
-  LV_UNUSED(e);
-  t2_dark = !t2_dark;
-  apply_tile_colors(t2, t2_label, t2_dark);
-}
 
 // --------------------------------------------------------------------
 // Timer callback: switch from splash to main tileview
@@ -55,12 +37,38 @@ static void on_tile2_clicked(lv_event_t* e)
 static void switch_to_main(lv_timer_t* timer)
 {
   LV_UNUSED(timer);
-
+  
+  Serial.println("Switching to main screen...");
+  
+  // Set flag to indicate main screen is being loaded
+  main_screen_loaded = true;
+  
   // Load main interface with fade-in animation (cannot swipe back)
   lv_scr_load_anim(tileview, LV_SCR_LOAD_ANIM_FADE_IN, 500, 0, false);
+  
+  Serial.println("Main screen loaded.");
+}
 
-  // Free splash screen memory (optional but clean)
-  lv_obj_del(splash_screen);
+// --------------------------------------------------------------------
+// Connect to Wi-Fi (non-blocking)
+// --------------------------------------------------------------------
+static void connect_wifi_non_blocking()
+{
+  static bool wifi_started = false;
+  
+  if (!wifi_started) {
+    Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    wifi_started = true;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED && !wifi_connected) {
+    Serial.println("WiFi connected.");
+    wifi_connected = true;
+  } else if (WiFi.status() != WL_CONNECTED && millis() > 15000 && !wifi_connected) {
+    Serial.println("WiFi could not connect (timeout).");
+  }
 }
 
 // --------------------------------------------------------------------
@@ -71,7 +79,7 @@ static void create_ui()
   //
   // --- Splash Screen ---
   //
-  splash_screen = lv_obj_create(NULL);  // separate screen (not inside tileview)
+  splash_screen = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(splash_screen, lv_color_white(), 0);
 
   lv_obj_t* splash_label = lv_label_create(splash_screen);
@@ -83,57 +91,37 @@ static void create_ui()
   lv_scr_load(splash_screen);
 
   //
-  // --- Main UI (Tileview) ---
+  // --- Main UI (Tileview) - created but not yet displayed ---
   //
   tileview = lv_tileview_create(NULL);
-  lv_obj_set_size(tileview, lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
-  lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_OFF);
-
+  
   // Add two horizontal tiles
   t1 = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_HOR);
   t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
 
-  // --- Tile #1 content ---
+  // --- Tile #1 (Light mode) ---
+  lv_obj_set_style_bg_color(t1, lv_color_white(), 0);
+  
   t1_label = lv_label_create(t1);
   lv_label_set_text(t1_label, "Tile 1");
+  lv_obj_set_style_text_color(t1_label, lv_color_black(), 0);
   lv_obj_center(t1_label);
 
-  // --- Tile #2 content ---
+  // --- Tile #2 (Light mode) ---
+  lv_obj_set_style_bg_color(t2, lv_color_white(), 0);
+  
   t2_label = lv_label_create(t2);
   lv_label_set_text(t2_label, "Main Screen");
+  lv_obj_set_style_text_color(t2_label, lv_color_black(), 0);
   lv_obj_center(t2_label);
-
-  apply_tile_colors(t2, t2_label, /*dark=*/false);
-  lv_obj_add_flag(t2, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(t2, on_tile2_clicked, LV_EVENT_CLICKED, NULL);
 
   //
   // --- Timer: after 3 seconds, show main UI ---
   //
   lv_timer_t* boot_timer = lv_timer_create(switch_to_main, 3000, NULL);
   lv_timer_set_repeat_count(boot_timer, 1);  // one-shot timer
-}
-
-// --------------------------------------------------------------------
-// Connect to Wi-Fi
-// --------------------------------------------------------------------
-static void connect_wifi()
-{
-  Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  const uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 15000) {
-    delay(250);
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi connected.");
-  } else {
-    Serial.println("WiFi could not connect (timeout).");
-  }
+  
+  Serial.println("UI created.");
 }
 
 // --------------------------------------------------------------------
@@ -143,6 +131,8 @@ void setup()
 {
   Serial.begin(115200);
   delay(200);
+  
+  Serial.println("Starting setup...");
 
   if (!amoled.begin()) {
     Serial.println("Failed to init LilyGO AMOLED.");
@@ -150,16 +140,19 @@ void setup()
       delay(1000);
   }
 
+  Serial.println("AMOLED initialized.");
+
   beginLvglHelper(amoled);  // init LVGL for this board
 
-  // ⚙️ Wait a bit after initializing LVGL helper
-  lv_timer_handler();  // process one frame
+  Serial.println("LVGL initialized.");
+
+  // Process one frame
+  lv_timer_handler();
   delay(200);
 
   create_ui();
-  lv_timer_handler();  // make sure splash screen is drawn
-
-  connect_wifi();
+  
+  Serial.println("Setup complete.");
 }
 
 // --------------------------------------------------------------------
@@ -168,5 +161,25 @@ void setup()
 void loop()
 {
   lv_timer_handler();
+  
+  // Delete splash screen after the animation completes
+  if (main_screen_loaded && !splash_deleted) {
+    static uint32_t animation_start_time = 0;
+    
+    if (animation_start_time == 0) {
+      animation_start_time = millis();
+    }
+    
+    if (millis() - animation_start_time > 600) {
+      Serial.println("Deleting splash screen...");
+      lv_obj_del_async(splash_screen);
+      splash_deleted = true;
+      Serial.println("Splash screen deleted.");
+    }
+  }
+  
+  // Non-blocking WiFi connection
+  connect_wifi_non_blocking();
+  
   delay(5);
 }
