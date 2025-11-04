@@ -8,29 +8,15 @@
 #include <LV_Helper.h>
 #include <lvgl.h>
 #include <vector>
+#include "smhiApi.hpp"
 
 // --------------------------------------------------------------------
 // --- Konstanter och globala variabler ---
 // --------------------------------------------------------------------
 static const char* WIFI_SSID = "Nothing";
 static const char* WIFI_PASSWORD = "hacM3Plz";
-
-struct DataPoint {
-    String date;
-    float temp;
-};
-static std::vector<DataPoint> weatherData;
-
-struct Station {
-    const char* name;
-    const char* id;
-};
-Station stations[] = {
-    {"Karlskrona", "65020"},
-    {"Stockholm",  "98200"},
-    {"Göteborg",   "97400"}
-};
-const char* param_codes[] = {"1","2","3"};  // 1=Temp, 2=Nederbörd, 3=Vind
+SMHI_API weather("https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/");
+String period[3] = {"latest-day","latest-days","latest-month"};
 
 LilyGo_Class amoled;
 
@@ -79,7 +65,9 @@ static void switch_to_main(lv_timer_t* timer) {
 static void connect_wifi_non_blocking() {
     static bool wifi_started = false;
     static uint32_t start_time = 0;
+    
     if(!wifi_started){
+        WiFi.scanNetworks();
         Serial.printf("Connecting to WiFi SSID: %s\n", WIFI_SSID);
         WiFi.mode(WIFI_STA);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -91,6 +79,8 @@ static void connect_wifi_non_blocking() {
         wifi_connected = true;
     } else if(WiFi.status() != WL_CONNECTED && millis() - start_time > 30000){
         Serial.println("WiFi could not connect (timeout), retrying...");
+        Serial.print("WiFi status: ");
+        Serial.println(WiFi.status());
         WiFi.disconnect(true);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
         start_time = millis();
@@ -173,7 +163,7 @@ void create_settings_tile(){
     auto cb = [](lv_event_t* e){
         int city_idx = lv_dropdown_get_selected(city_dropdown);
         int param_idx = lv_dropdown_get_selected(param_dropdown);
-        update_weather_data(city_idx,param_idx);
+        weather.update_weather_data(city_idx,param_idx,period[0]);
     };
     lv_obj_add_event_cb(city_dropdown,cb,LV_EVENT_VALUE_CHANGED,NULL);
     lv_obj_add_event_cb(param_dropdown,cb,LV_EVENT_VALUE_CHANGED,NULL);
@@ -216,84 +206,6 @@ void setup_weather_screen(){
 }
 
 // --------------------------------------------------------------------
-// --- Parsning av SMHI-data ---
-// --------------------------------------------------------------------
-void parseWeatherData(const String& jsonData){
-    DynamicJsonDocument doc(60000);
-    DeserializationError err = deserializeJson(doc,jsonData);
-    if(err){
-        Serial.print("JSON parse error: ");
-        Serial.println(err.c_str());
-        return;
-    }
-
-    weatherData.clear();
-
-    if(doc.containsKey("value")){
-        JsonArray arr = doc["value"];
-        for(JsonObject v: arr){
-            DataPoint dp;
-            dp.date = v["date"].as<String>().substring(0,10);
-            dp.temp = v["value"].as<float>();
-            weatherData.push_back(dp);
-        }
-    } else if(doc.containsKey("timeSeries")){
-        JsonArray ts = doc["timeSeries"];
-        for(JsonObject rec : ts){
-            String t = rec["validTime"].as<String>();
-            JsonArray pars = rec["parameters"];
-            for(JsonObject p : pars){
-                if(String(p["name"].as<const char*>())=="t"){
-                    float val = p["values"][0].as<float>();
-                    DataPoint dp;
-                    dp.date = t.substring(0,10);
-                    dp.temp = val;
-                    weatherData.push_back(dp);
-                    break;
-                }
-            }
-        }
-    } else {
-        Serial.println("No known JSON key for data array!");
-        return;
-    }
-
-    Serial.printf("Parsed %d datapoints.\n",weatherData.size());
-    update_chart_from_slider(NULL);
-}
-
-// --------------------------------------------------------------------
-// --- Hämta data via HTTPS ---
-// --------------------------------------------------------------------
-void update_weather_data(int city_idx,int param_idx){
-    String url="https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/";
-    url+=param_codes[param_idx];
-    url+="/station/";
-    url+=stations[city_idx].id;
-    url+="/period/latest-months/data.json";
-
-    Serial.printf("Fetching data: %s\n",url.c_str());
-
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient https;
-    if(https.begin(client,url)){
-        int httpCode = https.GET();
-        if(httpCode==200){
-            String payload = https.getString();
-            parseWeatherData(payload);
-            Serial.println("Weather data fetched OK.");
-        } else {
-            Serial.printf("HTTP GET failed, code: %d\n",httpCode);
-        }
-        https.end();
-    } else {
-        Serial.println("Failed to begin HTTPS request");
-    }
-}
-
-// --------------------------------------------------------------------
 // --- Arduino setup & loop ---
 // --------------------------------------------------------------------
 void setup(){
@@ -332,7 +244,8 @@ void loop(){
     // --- Automatisk initial datahämtning ---
     if(wifi_connected && !initial_data_fetched){
         initial_data_fetched = true;
-        update_weather_data(0,0); // Karlskrona, Temperatur
+        weather.update_weather_data(0,0,period[3]); // Karlskrona, Temperatur
+        update_chart_from_slider(NULL);
     }
 
     delay(5);
