@@ -9,7 +9,7 @@
 #include <lvgl.h>
 #include <vector>
 #include "smhiApi.hpp"
-
+#include "upcomingWeek.hpp"  // Include the UpcomingWeek header
 // --------------------------------------------------------------------
 // --- Konstanter och globala variabler ---
 // --------------------------------------------------------------------
@@ -26,6 +26,7 @@ static lv_obj_t* t1;
 static lv_obj_t* t2;
 static lv_obj_t* t3;
 static lv_obj_t* t4;
+static lv_obj_t* t5;
 static lv_obj_t* chart;
 static lv_chart_series_t* series;
 static lv_obj_t* slider;
@@ -138,6 +139,18 @@ static void create_ui(){
     t4 = lv_tileview_add_tile(tileview,3,0,LV_DIR_HOR);
     lv_obj_set_style_bg_color(t4, lv_color_white(),0);
     create_settings_tile();
+
+    t5 = lv_tileview_add_tile(tileview, 4, 0, LV_DIR_HOR);
+    lv_obj_set_style_bg_color(t5, lv_color_white(), 0);
+    lv_obj_t* t5_label = lv_label_create(t5);
+    lv_label_set_text(t5_label, "Loading upcoming week weather...");
+    lv_obj_set_style_text_font(t5_label, &lv_font_montserrat_24, 0);
+    lv_obj_center(t5_label);
+
+    // Set default values in dropdowns
+    lv_dropdown_set_selected(city_dropdown, 0);  // Karlskrona
+    lv_dropdown_set_selected(param_dropdown, 0); // Temperature
+
 
     // Sätt default-val i dropdowns
     lv_dropdown_set_selected(city_dropdown,0);  // Karlskrona
