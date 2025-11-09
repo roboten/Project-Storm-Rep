@@ -1,15 +1,18 @@
-#include <WiFi.h>
+#pragma once
+#include <Arduino.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <TFT_eSPI.h>
-#include <WiFiClientSecure.h>
 #include <vector>
 
-const char* param_codes[] = {"1", "2", "3"};  // 1=Temp, 2=Nederbörd, 3=Vind
+// --------------------------------------------------------------------
+// --- Data Definitions ---
+// --------------------------------------------------------------------
+const char* param_codes[] = {"1", "2", "3"};  // 1=Temp, 2=Precipitation, 3=Wind
 
 struct DataPoint {
-  String date;   // "YYYY-MM-DD"
-  String time;   // "HH:MM"
+  String date;
+  String time;
   float temp;
 };
 
@@ -18,26 +21,17 @@ struct Station {
   const char* id;
 };
 
-Station stations[] = {{"Karlskrona", "65090"},
-                      {"Stockholm", "98230"},
-                      {"Göteborg", "71420"}};
-
-static std::vector<DataPoint> weatherData;
-
-class SMHI_API {
- public:
-  SMHI_API(const char* apiUrl);
-  bool CONNECT();
-  void update_weather_data(int city_idx, int param_idx, String period);
-  void parseWeatherData(const String& jsonData);
-
- private:
-  const char* apiUrl;
+Station stations[] = {
+    {"Karlskrona", "65090"},
+    {"Stockholm", "98230"},
+    {"Göteborg", "71420"},
 };
 
-// ---- Helper: epoch(ms) -> date/time strings (UTC) ----
-// If you want local time, add your timezone offset in minutes
-// (e.g. CET winter = +60, CEST summer = +120)
+std::vector<DataPoint> weatherData;
+
+// --------------------------------------------------------------------
+// --- Helper: epoch → date/time ---
+// --------------------------------------------------------------------
 static inline void epoch_ms_to_date_time(uint64_t ms,
                                          String& outDate,
                                          String& outTime,
@@ -46,12 +40,12 @@ static inline void epoch_ms_to_date_time(uint64_t ms,
   time_t t = (time_t)sec;
   struct tm tmres;
 #if defined(ESP32)
-  gmtime_r(&t, &tmres);  // UTC
+  gmtime_r(&t, &tmres);
 #else
   tmres = *gmtime(&t);
 #endif
-  char dBuf[11];  // YYYY-MM-DD
-  char tBuf[6];   // HH:MM
+  char dBuf[11];
+  char tBuf[6];
   snprintf(dBuf, sizeof(dBuf), "%04d-%02d-%02d", tmres.tm_year + 1900,
            tmres.tm_mon + 1, tmres.tm_mday);
   snprintf(tBuf, sizeof(tBuf), "%02d:%02d", tmres.tm_hour, tmres.tm_min);
@@ -59,99 +53,81 @@ static inline void epoch_ms_to_date_time(uint64_t ms,
   outTime = tBuf;
 }
 
-SMHI_API::SMHI_API(const char* apiUrl) : apiUrl(apiUrl) {}
+// --------------------------------------------------------------------
+// --- SMHI API class ---
+// --------------------------------------------------------------------
+class SMHI_API {
+ public:
+  explicit SMHI_API(const char* apiUrl) : apiUrl(apiUrl) {}
 
-void SMHI_API::update_weather_data(int city_idx,
-                                   int param_idx,
-                                   String period) {
-  String url = apiUrl;
-  url += param_codes[param_idx];
-  url += "/station/";
-  url += stations[city_idx].id;
-  url += "/period/" + period + "/data.json";
+  void update_weather_data(int city_idx, int param_idx, String period) {
+    String url = apiUrl;
+    url += param_codes[param_idx];
+    url += "/station/";
+    url += stations[city_idx].id;
+    url += "/period/" + period + "/data.json";
 
-  Serial.printf("Fetching data: %s\n", url.c_str());
+    Serial.printf("Fetching data: %s\n", url.c_str());
 
-  WiFiClientSecure client;
-  client.setInsecure();
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient https;
 
-  HTTPClient https;
-  if (https.begin(client, url)) {
-    int httpCode = https.GET();
-    if (httpCode == 200) {
-      String payload = https.getString();
-      parseWeatherData(payload);
-      Serial.println("Weather data fetched OK.");
-    } else {
-      Serial.printf("HTTP GET failed, code: %d\n", httpCode);
-    }
-    https.end();
-  } else {
-    Serial.println("Failed to begin HTTPS request");
-  }
-}
-
-void SMHI_API::parseWeatherData(const String& jsonData) {
-  DynamicJsonDocument doc(60000);
-  DeserializationError err = deserializeJson(doc, jsonData);
-  if (err) {
-    Serial.print("JSON parse error: ");
-    Serial.println(err.c_str());
-    return;
-  }
-
-  weatherData.clear();
-
-  // Format 1 (station/period/.../data.json): array "value" with
-  // objects that contain "date" as epoch ms and "value" as float
-  if (doc.containsKey("value")) {
-    JsonArray arr = doc["value"];
-    for (JsonObject v : arr) {
-      DataPoint dp;
-
-      // date can be number (ms) or string with digits
-      uint64_t ms = 0;
-      JsonVariant dv = v["date"];
-      if (dv.is<uint64_t>()) {
-        ms = dv.as<uint64_t>();
-      } else if (dv.is<long long>()) {
-        ms = (uint64_t)dv.as<long long>();
+    if (https.begin(client, url)) {
+      int code = https.GET();
+      if (code == 200) {
+        String payload = https.getString();
+        parseWeatherData(payload);
+        Serial.println("Weather data fetched OK.");
       } else {
-        // fallback if number is encoded as string
-        String s = dv.as<String>();
-        ms = strtoull(s.c_str(), nullptr, 10);
+        Serial.printf("HTTP error: %d\n", code);
       }
-
-      // Convert epoch ms -> date/time (UTC). If you want Sweden local time:
-      // epoch_ms_to_date_time(ms, dp.date, dp.time, 60 /*CET*/);
-      epoch_ms_to_date_time(ms, dp.date, dp.time);
-
-      dp.temp = v["value"].as<float>();
-      weatherData.push_back(dp);
+      https.end();
+    } else {
+      Serial.println("Failed to start HTTPS");
     }
   }
-  // Format 2 (timeSeries style): "validTime" ISO string and parameters
-  else if (doc.containsKey("timeSeries")) {
-    JsonArray ts = doc["timeSeries"];
-    for (JsonObject rec : ts) {
-      String t = rec["validTime"].as<String>();  // e.g. "2024-11-05T12:00:00Z"
-      JsonArray pars = rec["parameters"];
-      for (JsonObject p : pars) {
-        if (String(p["name"].as<const char*>()) == "t") {
-          float val = p["values"][0].as<float>();
-          DataPoint dp;
-          dp.date = t.substring(0, 10);
-          dp.time = t.substring(11, 16);
-          dp.temp = val;
-          weatherData.push_back(dp);
-          break;
+
+  void parseWeatherData(const String& jsonData) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, jsonData);
+    if (err) {
+      Serial.print("JSON parse error: ");
+      Serial.println(err.c_str());
+      return;
+    }
+
+    weatherData.clear();
+
+    if (doc["value"].is<JsonArray>()) {
+      for (JsonObject v : doc["value"].as<JsonArray>()) {
+        DataPoint dp;
+        uint64_t ms = v["date"].as<uint64_t>();
+        epoch_ms_to_date_time(ms, dp.date, dp.time);
+        dp.temp = v["value"].as<float>();
+        weatherData.push_back(dp);
+      }
+    } else if (doc["timeSeries"].is<JsonArray>()) {
+      for (JsonObject rec : doc["timeSeries"].as<JsonArray>()) {
+        String ts = rec["validTime"].as<String>();
+        for (JsonObject p : rec["parameters"].as<JsonArray>()) {
+          if (String(p["name"].as<const char*>()) == "t") {
+            DataPoint dp;
+            dp.date = ts.substring(0, 10);
+            dp.time = ts.substring(11, 16);
+            dp.temp = p["values"][0].as<float>();
+            weatherData.push_back(dp);
+            break;
+          }
         }
       }
+    } else {
+      Serial.println("SMHI: Unknown JSON layout!");
     }
-  } else {
-    Serial.println("No known JSON key for data array!");
-    return;
+
+    Serial.printf("Parsed %d data points.\n", weatherData.size());
   }
 
-  Serial.printf("Parsed %d datapoints.\n", weatherData.size());
-}
+ private:
+  const char* apiUrl;
+};
