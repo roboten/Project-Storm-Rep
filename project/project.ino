@@ -10,39 +10,46 @@
 #include <vector>
 
 #include "smhiApi.hpp"
-#include "upcomingWeek.hpp"
+#include "stationPicker.hpp"
 #include "settingsTile.hpp"
 
 // --------------------------------------------------------------------
-// --- WiFi credentials ---
+// Wi‑Fi
 // --------------------------------------------------------------------
 const char* WIFI_SSID = "Nothing";
 const char* WIFI_PASSWORD = "hacM3Plz";
 
 // --------------------------------------------------------------------
-// --- Global objects shared with settingsTile.hpp ---
+// Globals shared across modules
 // --------------------------------------------------------------------
 LilyGo_Class amoled;
 SMHI_API weather("https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/");
 String period[3] = {"latest-day", "latest-days", "latest-month"};
-lv_obj_t* t5 = nullptr;  // Settings tile pointer for global access
+lv_obj_t* t5 = NULL;
+
+// Only **one real definition** of gStations and weatherData here
+std::vector<StationInfo> gStations;
+std::vector<DataPoint> weatherData;
 
 // --------------------------------------------------------------------
-// --- UI global state ---
+// UI state
 // --------------------------------------------------------------------
-static lv_obj_t* tileview;
-static lv_obj_t* chart;
-static lv_chart_series_t* series;
-static lv_obj_t* slider;
+static lv_obj_t* tileview = NULL;
+static lv_obj_t* chart = NULL;
+static lv_chart_series_t* series = NULL;
+static lv_obj_t* slider = NULL;
 
-// --- States ---
+// States
 static bool wifi_connected = false;
+static bool stations_loaded = false;
 static bool initial_data_fetched = false;
+
+// Chart window state
 static int g_window_start = 0;
 static int g_window_size = 0;
 
 // --------------------------------------------------------------------
-// --- Forward declarations ---
+// Forward declarations
 // --------------------------------------------------------------------
 static void connect_wifi_non_blocking();
 static void create_ui();
@@ -51,7 +58,7 @@ static void chart_draw_event_cb(lv_event_t* e);
 static void update_chart_from_slider(lv_event_t* e);
 
 // --------------------------------------------------------------------
-// --- WiFi (non-blocking) ---
+// Wi‑Fi (non-blocking)
 // --------------------------------------------------------------------
 static void connect_wifi_non_blocking() {
   static bool wifi_started = false;
@@ -78,34 +85,38 @@ static void connect_wifi_non_blocking() {
 }
 
 // --------------------------------------------------------------------
-// --- UI creation ---
+// UI creation
 // --------------------------------------------------------------------
 static void create_ui() {
   tileview = lv_tileview_create(NULL);
+  // Ensure tile swiping works
+  lv_obj_set_scroll_dir(tileview, LV_DIR_ALL);
+  lv_obj_add_flag(tileview, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+  lv_obj_clear_flag(tileview, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
-  // ---------------- Tile 1: Boot / Splash ----------------
+  // Tile 1: Boot / Splash
   lv_obj_t* t1 = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t1, lv_color_white(), 0);
   lv_obj_t* splash_label = lv_label_create(t1);
-  lv_label_set_text(splash_label, "Group 1\nVersion 0.1");
+  lv_label_set_text(splash_label, "Group 1\nVersion 0.3");
   lv_obj_set_style_text_font(splash_label, &lv_font_montserrat_28, 0);
   lv_obj_center(splash_label);
 
-  // ---------------- Tile 2: Today’s Forecast ----------------
+  // Tile 2: Today’s Forecast (placeholder)
   lv_obj_t* t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t2, lv_color_white(), 0);
   lv_obj_t* t2_label = lv_label_create(t2);
   lv_label_set_text(t2_label, "Today’s Forecast");
   lv_obj_center(t2_label);
 
-  // ---------------- Tile 3: 7‑Day Forecast ----------------
+  // Tile 3: 7‑Day Forecast (placeholder)
   lv_obj_t* t3 = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t3, lv_color_white(), 0);
   lv_obj_t* t3_label = lv_label_create(t3);
   lv_label_set_text(t3_label, "7‑Day Forecast");
   lv_obj_center(t3_label);
 
-  // ---------------- Tile 4: Historical Chart ----------------
+  // Tile 4: Historical Chart
   lv_obj_t* t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t4, lv_color_white(), 0);
 
@@ -133,25 +144,27 @@ static void create_ui() {
   lv_obj_set_width(slider, lv_disp_get_hor_res(NULL) - 40);
   lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -8);
   lv_slider_set_range(slider, 0, 100);
-
   setup_weather_screen();
 
-  // ---------------- Tile 5: Settings ----------------
+  // Tile 5: Settings
   t5 = lv_tileview_add_tile(tileview, 4, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t5, lv_color_white(), 0);
   create_settings_tile();
 
+  // Load
   lv_scr_load_anim(tileview, LV_SCR_LOAD_ANIM_FADE_IN, 500, 0, false);
 }
 
 // --------------------------------------------------------------------
-// --- Chart X‑axis label callback ---
+// Chart X‑axis label callback
 // --------------------------------------------------------------------
 static void chart_draw_event_cb(lv_event_t* e) {
+  if (!chart) return;
   lv_obj_t* obj = lv_event_get_target(e);
   if (obj != chart) return;
 
-  auto* dsc = (lv_obj_draw_part_dsc_t*)lv_event_get_param(e);
+  lv_obj_draw_part_dsc_t* dsc =
+      (lv_obj_draw_part_dsc_t*)lv_event_get_param(e);
   if (dsc->part != LV_PART_TICKS || dsc->id != LV_CHART_AXIS_PRIMARY_X) return;
 
   int idx_in_window = (int)(dsc->value + 0.5f);
@@ -165,9 +178,10 @@ static void chart_draw_event_cb(lv_event_t* e) {
 }
 
 // --------------------------------------------------------------------
-// --- Update chart based on slider ---
+// Update chart based on slider
 // --------------------------------------------------------------------
 static void update_chart_from_slider(lv_event_t* e) {
+  if (!slider || !chart) return;
   if (weatherData.empty()) return;
 
   int slider_value = lv_slider_get_value(slider);
@@ -182,13 +196,13 @@ static void update_chart_from_slider(lv_event_t* e) {
   lv_chart_set_point_count(chart, window_size);
   for (int i = 0; i < window_size; i++) {
     float v = weatherData[start + i].temp;
-    v = constrain(v, 5.0f, 15.0f);
+    if (v < 5.0f) v = 5.0f;
+    if (v > 15.0f) v = 15.0f;
     lv_chart_set_value_by_id(chart, series, i, v);
   }
   lv_chart_refresh(chart);
 }
 
-// --------------------------------------------------------------------
 static void setup_weather_screen() {
   lv_obj_add_event_cb(slider, update_chart_from_slider,
                       LV_EVENT_VALUE_CHANGED, NULL);
@@ -196,7 +210,7 @@ static void setup_weather_screen() {
 }
 
 // --------------------------------------------------------------------
-// --- Arduino setup & loop ---
+// Arduino setup & loop
 // --------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
@@ -207,7 +221,6 @@ void setup() {
     Serial.println("Failed to init AMOLED");
     while (true) delay(1000);
   }
-
   amoled.setBrightness(255);
   amoled.setRotation(0);
   beginLvglHelper(amoled);
@@ -220,9 +233,25 @@ void loop() {
   lv_timer_handler();
   connect_wifi_non_blocking();
 
-  if (wifi_connected && !initial_data_fetched) {
+  if (wifi_connected && !stations_loaded) {
+    // Fetch and select stations once
+    stations_loaded = fetch_and_select_top_stations(10.0f, 50);
+    if (stations_loaded) {
+      Serial.println("Stations loaded, updating settings dropdown...");
+      settings_update_city_options();  // fill dropdown with station names
+    } else {
+      Serial.println("Failed to load stations.");
+    }
+  }
+
+  if (wifi_connected && stations_loaded && !initial_data_fetched) {
     initial_data_fetched = true;
-    weather.update_weather_data(0, 0, period[2]);
+
+    // Default to the first station if exists, Temperature, latest-month
+    int station_idx = 0;
+    if (!gStations.empty()) station_idx = 0;
+
+    weather.update_weather_data(station_idx, /*param_idx=*/0, period[2]);
     update_chart_from_slider(NULL);
   }
 

@@ -5,33 +5,25 @@
 #include <ArduinoJson.h>
 #include <vector>
 
-// --------------------------------------------------------------------
-// --- Data Definitions ---
-// --------------------------------------------------------------------
-const char* param_codes[] = {"1", "2", "3"};  // 1=Temp, 2=Precipitation, 3=Wind
+// Reuse StationInfo from your generated stations.hpp to avoid redefinition
+#include "stations.hpp"
 
+// Provided by project.ino
+extern std::vector<StationInfo> gStations;
+
+// Weather datapoints for chart
 struct DataPoint {
-  String date;
-  String time;
+  String date;  // "YYYY-MM-DD"
+  String time;  // "HH:MM"
   float temp;
 };
 
-struct Station {
-  const char* name;
-  const char* id;
-};
+// Provided by project.ino
+extern std::vector<DataPoint> weatherData;
 
-Station stations[] = {
-    {"Karlskrona", "65090"},
-    {"Stockholm", "98230"},
-    {"Göteborg", "71420"},
-};
-
-std::vector<DataPoint> weatherData;
-
-// --------------------------------------------------------------------
-// --- Helper: epoch → date/time ---
-// --------------------------------------------------------------------
+// ------------------------------------------------------------------
+// Epoch ms -> date/time strings (UTC). Add TZ offset if needed.
+// ------------------------------------------------------------------
 static inline void epoch_ms_to_date_time(uint64_t ms,
                                          String& outDate,
                                          String& outTime,
@@ -53,18 +45,25 @@ static inline void epoch_ms_to_date_time(uint64_t ms,
   outTime = tBuf;
 }
 
-// --------------------------------------------------------------------
-// --- SMHI API class ---
-// --------------------------------------------------------------------
+// ------------------------------------------------------------------
+// SMHI API single-header implementation
+// ------------------------------------------------------------------
 class SMHI_API {
  public:
-  explicit SMHI_API(const char* apiUrl) : apiUrl(apiUrl) {}
+  explicit SMHI_API(const char* apiRoot) : apiUrl(apiRoot) {}
 
-  void update_weather_data(int city_idx, int param_idx, String period) {
+  // Returns true if data fetched and parsed into weatherData
+  bool update_weather_data(int station_idx, int param_idx, String period) {
+    weatherData.clear();
+
+    if (station_idx < 0 || station_idx >= (int)gStations.size()) return false;
+
+    const char* param_codes[] = {"1", "2", "3"};  // temp, precip, wind
+
     String url = apiUrl;
     url += param_codes[param_idx];
     url += "/station/";
-    url += stations[city_idx].id;
+    url += gStations[station_idx].id;
     url += "/period/" + period + "/data.json";
 
     Serial.printf("Fetching data: %s\n", url.c_str());
@@ -73,26 +72,30 @@ class SMHI_API {
     client.setInsecure();
     HTTPClient https;
 
-    if (https.begin(client, url)) {
-      int code = https.GET();
-      if (code == 200) {
-        String payload = https.getString();
-        parseWeatherData(payload);
-        Serial.println("Weather data fetched OK.");
-      } else {
-        Serial.printf("HTTP error: %d\n", code);
-      }
+    if (!https.begin(client, url)) return false;
+
+    int code = https.GET();
+    if (code != 200) {
+      Serial.printf("SMHI: HTTP error %d\n", code);
       https.end();
-    } else {
-      Serial.println("Failed to start HTTPS");
+      return false;
     }
+
+    String payload = https.getString();
+    https.end();
+
+    parseWeatherData(payload);
+    bool ok = !weatherData.empty();
+    Serial.printf("SMHI: %s (%d points)\n", ok ? "Data OK" : "No data parsed",
+                  (int)weatherData.size());
+    return ok;
   }
 
   void parseWeatherData(const String& jsonData) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, jsonData);
     if (err) {
-      Serial.print("JSON parse error: ");
+      Serial.print("SMHI: JSON parse error: ");
       Serial.println(err.c_str());
       return;
     }
@@ -109,23 +112,19 @@ class SMHI_API {
       }
     } else if (doc["timeSeries"].is<JsonArray>()) {
       for (JsonObject rec : doc["timeSeries"].as<JsonArray>()) {
-        String ts = rec["validTime"].as<String>();
+        String t = rec["validTime"].as<String>();  // "YYYY-MM-DDTHH:MM:SSZ"
         for (JsonObject p : rec["parameters"].as<JsonArray>()) {
           if (String(p["name"].as<const char*>()) == "t") {
             DataPoint dp;
-            dp.date = ts.substring(0, 10);
-            dp.time = ts.substring(11, 16);
+            dp.date = t.substring(0, 10);
+            dp.time = t.substring(11, 16);
             dp.temp = p["values"][0].as<float>();
             weatherData.push_back(dp);
             break;
           }
         }
       }
-    } else {
-      Serial.println("SMHI: Unknown JSON layout!");
     }
-
-    Serial.printf("Parsed %d data points.\n", weatherData.size());
   }
 
  private:
