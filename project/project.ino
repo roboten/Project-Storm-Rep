@@ -8,6 +8,7 @@
 #include <LV_Helper.h>
 #include <lvgl.h>
 #include <vector>
+#include "time.h" // Include time for configTime
 
 #include "smhiApi.hpp"
 #include "stationPicker.hpp"
@@ -19,6 +20,11 @@
 // --------------------------------------------------------------------
 const char* WIFI_SSID = "Nothing";
 const char* WIFI_PASSWORD = "hacM3Plz";
+
+// NTP Server settings
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 3600;      // GMT+1
+const int   daylightOffset_sec = 3600; // DST
 
 // --------------------------------------------------------------------
 // Globals shared across modules
@@ -77,6 +83,10 @@ static void connect_wifi_non_blocking() {
   if (WiFi.status() == WL_CONNECTED && !wifi_connected) {
     Serial.println("WiFi connected.");
     wifi_connected = true;
+    
+    // Init Time via NTP
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    Serial.println("Time sync started...");
   } else if (WiFi.status() != WL_CONNECTED &&
              millis() - start_time > 30000) {
     Serial.println("WiFi connect timeout — retrying...");
@@ -104,15 +114,12 @@ static void create_ui() {
   lv_obj_set_style_text_font(splash_label, &lv_font_montserrat_28, 0);
   lv_obj_center(splash_label);
 
-  // Tile 2: Today’s Forecast (placeholder)
-  lv_obj_t* t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
+  // Tile 2: Today’s Forecast
+  t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t2, lv_color_white(), 0);
 
+  // Initialize the Forecast UI on Tile 2
   TodayForecast_CreateOn(t2);
-
-  lv_obj_t* t2_label = lv_label_create(t2);
-  lv_label_set_text(t2_label, "Today’s Forecast"); //Placeholder
-  lv_obj_center(t2_label);
 
   // Tile 3: 7‑Day Forecast (placeholder)
   lv_obj_t* t3 = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_HOR);
