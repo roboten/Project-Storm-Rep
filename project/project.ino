@@ -12,6 +12,7 @@
 #include "smhiApi.hpp"
 #include "stationPicker.hpp"
 #include "settingsTile.hpp"
+#include "upcomingWeek.hpp"
 
 // --------------------------------------------------------------------
 // Wi‑Fi
@@ -38,6 +39,9 @@ static lv_obj_t* tileview = NULL;
 static lv_obj_t* chart = NULL;
 static lv_chart_series_t* series = NULL;
 static lv_obj_t* slider = NULL;
+static lv_obj_t* forecast_container=NULL;
+
+
 
 // States
 static bool wifi_connected = false;
@@ -110,11 +114,23 @@ static void create_ui() {
   lv_obj_center(t2_label);
 
   // Tile 3: 7‑Day Forecast (placeholder)
+  // Tile 3: 7-Day Forecast
   lv_obj_t* t3 = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t3, lv_color_white(), 0);
-  lv_obj_t* t3_label = lv_label_create(t3);
-  lv_label_set_text(t3_label, "7‑Day Forecast");
-  lv_obj_center(t3_label);
+
+  // Create and assign the container
+  forecast_container = lv_obj_create(t3);
+  lv_obj_set_size(forecast_container, lv_disp_get_hor_res(NULL) - 20, lv_disp_get_ver_res(NULL) - 40);
+  lv_obj_align(forecast_container, LV_ALIGN_TOP_MID, 0, 10);
+  lv_obj_set_style_bg_color(forecast_container, lv_color_lighten(lv_color_hex(0x3366FF), 50), 0); // Light blue background for visibility
+  lv_obj_set_flex_flow(forecast_container, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(forecast_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+
+  // Add a placeholder label to confirm the container is visible
+  lv_obj_t* placeholder_label = lv_label_create(forecast_container);
+  lv_label_set_text(placeholder_label, "Forecast will appear here");
+  lv_obj_center(placeholder_label);
+
 
   // Tile 4: Historical Chart
   lv_obj_t* t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
@@ -209,6 +225,46 @@ static void setup_weather_screen() {
   update_chart_from_slider(NULL);
 }
 
+
+//---------------------------------------------
+// Function to update the 7-day forecast UI
+//---------------------------------------------
+void update_7day_forecast_ui(const std::vector<DailyWeather>& forecast) {
+    if (!forecast_container) return;
+
+    lv_obj_clean(forecast_container); // Clear existing content
+
+    if (forecast.empty()) {
+        lv_obj_t* no_data_label = lv_label_create(forecast_container);
+        lv_label_set_text(no_data_label, "No forecast data available.");
+        lv_obj_center(no_data_label);
+        return;
+    }
+
+    // Create UI elements for each day
+    for (const auto& day : forecast) {
+        lv_obj_t* day_card = lv_obj_create(forecast_container);
+        lv_obj_set_size(day_card, 90, 120);
+        lv_obj_set_style_bg_color(day_card, lv_color_hex(0xE0E0E0), 0); // Light gray background
+        lv_obj_set_style_border_width(day_card, 1, 0);
+        lv_obj_set_style_radius(day_card, 8, 0);
+
+        lv_obj_t* date_label = lv_label_create(day_card);
+        lv_label_set_text_fmt(date_label, "%s", day.date.c_str());
+        lv_obj_align(date_label, LV_ALIGN_TOP_MID, 0, 4);
+
+        lv_obj_t* temp_label = lv_label_create(day_card);
+        lv_label_set_text_fmt(temp_label, "%.1f/%.1f°C", day.tempMin, day.tempMax);
+        lv_obj_align(temp_label, LV_ALIGN_CENTER, 0, 0);
+
+        lv_obj_t* symbol_label = lv_label_create(day_card);
+        lv_label_set_text_fmt(symbol_label, "%d", day.symbolCode);
+        lv_obj_align(symbol_label, LV_ALIGN_BOTTOM_MID, 0, -4);
+    }
+}
+
+
+
 // --------------------------------------------------------------------
 // Arduino setup & loop
 // --------------------------------------------------------------------
@@ -254,6 +310,29 @@ void loop() {
     weather.update_weather_data(station_idx, /*param_idx=*/0, period[2]);
     update_chart_from_slider(NULL);
   }
+
+  //7-day forecast
+  // Replace the 7-day forecast block in loop() with this:
+  if (wifi_connected && stations_loaded) {
+    std::vector<DailyWeather> mock_forecast = {
+        {"2025-11-18", 5.0, 10.0, 80.0, 0.0, 1},
+        {"2025-11-19", 6.0, 11.0, 75.0, 0.0, 2},
+        {"2025-11-20", 7.0, 12.0, 70.0, 0.0, 3},
+        {"2025-11-21", 8.0, 13.0, 65.0, 0.0, 4},
+        {"2025-11-22", 9.0, 14.0, 60.0, 0.0, 5},
+        {"2025-11-23", 10.0, 15.0, 55.0, 0.0, 6},
+        {"2025-11-24", 11.0, 16.0, 50.0, 0.0, 7}
+    };
+    update_7day_forecast_ui(mock_forecast);
+    // Disable further updates to avoid redundancy
+    static bool mock_data_shown = false;
+    if (!mock_data_shown) {
+        mock_data_shown = true;
+    }
+  }
+
+
+
 
   delay(5);
 }
