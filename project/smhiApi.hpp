@@ -107,7 +107,12 @@ class SMHI_API {
         DataPoint dp;
         uint64_t ms = v["date"].as<uint64_t>();
         epoch_ms_to_date_time(ms, dp.date, dp.time);
-        dp.temp = v["value"].as<float>();
+        // Handle value as string (API returns it as string)
+        if (v["value"].is<const char*>()) {
+          dp.temp = String(v["value"].as<const char*>()).toFloat();
+        } else {
+          dp.temp = v["value"].as<float>();
+        }
         weatherData.push_back(dp);
       }
     } else if (doc["timeSeries"].is<JsonArray>()) {
