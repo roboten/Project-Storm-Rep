@@ -62,9 +62,9 @@ static int g_y_min = -10;
 static int g_y_max = 20;
 
 // --------------------------------------------------------------------
-// Graph Margins
+// Graph Margins (left margin is now dynamic)
 // --------------------------------------------------------------------
-static const int GRAPH_MARGIN_LEFT = 32;
+static int g_graph_margin_left = 32;
 static const int GRAPH_MARGIN_RIGHT = 20;
 static const int GRAPH_MARGIN_TOP = 20;
 static const int GRAPH_MARGIN_BOTTOM = 40;
@@ -77,6 +77,7 @@ static void create_ui();
 static void setup_weather_screen();
 static void chart_draw_event_cb(lv_event_t *e);
 static void update_chart_from_slider(lv_event_t *e);
+static int calculate_margin_for_range(int y_min, int y_max);
 void update_7day_forecast_ui(const std::vector<DailyWeather> &forecast);
 
 // --------------------------------------------------------------------
@@ -104,14 +105,55 @@ static void connect_wifi_non_blocking() {
 }
 
 static const char *get_day_name(const String &date_str) {
+  static char day_buf[12];
+  
+  // YYYY-MM-DD format (10+ chars) -> show MM/DD
   if (date_str.length() >= 10) {
-    static char day_buf[8];
     int day = date_str.substring(8, 10).toInt();
     int month = date_str.substring(5, 7).toInt();
     snprintf(day_buf, sizeof(day_buf), "%02d/%02d", month, day);
     return day_buf;
   }
+  
+  // YYYY-MM format (7 chars) -> show month name or MM/YYYY
+  if (date_str.length() >= 7) {
+    int month = date_str.substring(5, 7).toInt();
+    int year = date_str.substring(2, 4).toInt(); // Last 2 digits of year
+    
+    // Option 1: Show as MM/YY
+    snprintf(day_buf, sizeof(day_buf), "%02d/%02d", month, year);
+    return day_buf;
+    
+    // Option 2: Show month abbreviation (uncomment if preferred)
+    /*
+    static const char* months[] = {
+      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    if (month >= 1 && month <= 12) {
+      snprintf(day_buf, sizeof(day_buf), "%s", months[month - 1]);
+      return day_buf;
+    }
+    */
+  }
+  
   return "";
+}
+
+// --------------------------------------------------------------------
+// Calculate margin based on data range
+// --------------------------------------------------------------------
+static int calculate_margin_for_range(int y_min, int y_max) {
+  int max_val = max(abs(y_min), abs(y_max));
+  int digits = 1;
+  while (max_val >= 10) {
+    max_val /= 10;
+    digits++;
+  }
+  if (y_min < 0) digits++; // Account for minus sign
+  
+  // ~9 pixels per digit with montserrat_14, plus padding
+  return max(32, digits * 9 + 20);
 }
 
 // --------------------------------------------------------------------
@@ -121,18 +163,16 @@ static void chart_draw_event_cb(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   lv_obj_t *obj = lv_event_get_target(e);
 
-  // 1. DRAW GRAPH BOUNDING BOX FIRST
   if (code == LV_EVENT_DRAW_MAIN_BEGIN) {
     lv_draw_ctx_t *draw_ctx = (lv_draw_ctx_t *)lv_event_get_param(e);
 
     lv_area_t coords;
     lv_obj_get_coords(obj, &coords);
 
-    // CALCULATE GRAPH BOUNDS ONCE
-    int graphX = coords.x1 + GRAPH_MARGIN_LEFT;
+    int graphX = coords.x1 + g_graph_margin_left;
     int graphY = coords.y1 + GRAPH_MARGIN_TOP;
     int graphWidth =
-        lv_obj_get_width(obj) - GRAPH_MARGIN_LEFT - GRAPH_MARGIN_RIGHT;
+        lv_obj_get_width(obj) - g_graph_margin_left - GRAPH_MARGIN_RIGHT;
     int graphHeight =
         lv_obj_get_height(obj) - GRAPH_MARGIN_TOP - GRAPH_MARGIN_BOTTOM;
 
@@ -154,7 +194,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
     return;
   }
 
-  // 2. DRAW LABELS
   if (code == LV_EVENT_DRAW_PART_BEGIN) {
     lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
 
@@ -162,7 +201,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
                                      LV_CHART_DRAW_PART_TICK_LABEL))
       return;
 
-    // Y-AXIS LABELS (LEFT-ALIGNED at FAR LEFT)
     if (dsc->id == LV_CHART_AXIS_PRIMARY_Y) {
       char buf[16];
       lv_snprintf(buf, sizeof(buf), "%.0f", (float)dsc->value);
@@ -171,32 +209,26 @@ static void chart_draw_event_cb(lv_event_t *e) {
       lv_draw_label_dsc_init(&label_dsc);
       label_dsc.color = lv_color_black();
       label_dsc.font = &lv_font_montserrat_14;
-      label_dsc.align = LV_TEXT_ALIGN_LEFT; // Align LEFT
+      label_dsc.align = LV_TEXT_ALIGN_RIGHT;
 
-      // Use the chart's absolute coordinates to find the far left edge
       lv_area_t coords;
       lv_obj_get_coords(obj, &coords);
 
       lv_area_t label_area;
-      // Start from the very left edge of the widget (coords.x1)
-      // End at the start of the graph area (coords.x1 + GRAPH_MARGIN_LEFT)
-      label_area.x1 = coords.x1 + 8; // Add small padding from edge
-      label_area.x2 = coords.x1 + GRAPH_MARGIN_LEFT - 2;
+      label_area.x1 = coords.x1 + 2;
+      label_area.x2 = coords.x1 + g_graph_margin_left - 4;
 
-      // Center vertically around the tick
       if (dsc->p1) {
         label_area.y1 = dsc->p1->y - 10;
         label_area.y2 = dsc->p1->y + 10;
         lv_draw_label(dsc->draw_ctx, &label_dsc, &label_area, buf, NULL);
       }
 
-      // Prevent default drawing
       if (dsc->text)
         dsc->text[0] = '\0';
       return;
     }
 
-    // X-AXIS LABEL DRAWING
     if (dsc->id == LV_CHART_AXIS_PRIMARY_X && dsc->text) {
       if (weatherData.empty() || g_window_size == 0)
         return;
@@ -231,7 +263,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
     }
   }
 
-  // 3. CUSTOM DRAWING LOOP (LINES & POINTS)
   if (code == LV_EVENT_DRAW_POST) {
     lv_draw_ctx_t *draw_ctx = (lv_draw_ctx_t *)lv_event_get_param(e);
 
@@ -241,22 +272,13 @@ static void chart_draw_event_cb(lv_event_t *e) {
     lv_area_t coords;
     lv_obj_get_coords(obj, &coords);
 
-    // RE-CALCULATE GRAPH BOUNDS (Must match exactly)
-    int graphX = coords.x1 + GRAPH_MARGIN_LEFT;
+    int graphX = coords.x1 + g_graph_margin_left;
     int graphY = coords.y1 + GRAPH_MARGIN_TOP;
     int graphWidth =
-        lv_obj_get_width(obj) - GRAPH_MARGIN_LEFT - GRAPH_MARGIN_RIGHT;
+        lv_obj_get_width(obj) - g_graph_margin_left - GRAPH_MARGIN_RIGHT;
     int graphHeight =
         lv_obj_get_height(obj) - GRAPH_MARGIN_TOP - GRAPH_MARGIN_BOTTOM;
 
-    // Define clipping area to strictly inside the graph box
-    lv_area_t clip_area;
-    clip_area.x1 = graphX;
-    clip_area.y1 = graphY;
-    clip_area.x2 = graphX + graphWidth - 1;
-    clip_area.y2 = graphY + graphHeight - 1;
-
-    // Line style
     lv_draw_line_dsc_t line_dsc;
     lv_draw_line_dsc_init(&line_dsc);
     line_dsc.width = 3;
@@ -265,7 +287,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
     line_dsc.round_start = 1;
     line_dsc.round_end = 1;
 
-    // Point style
     lv_draw_rect_dsc_t point_dsc;
     lv_draw_rect_dsc_init(&point_dsc);
     point_dsc.bg_color = lv_color_white();
@@ -280,7 +301,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
     lv_point_t p1;
     bool has_p1 = false;
 
-    // DRAWING LOOP
     for (int i = 0; i < g_window_size; i++) {
       int data_idx = g_window_start + i;
       if (data_idx >= (int)weatherData.size())
@@ -288,20 +308,14 @@ static void chart_draw_event_cb(lv_event_t *e) {
 
       float val = weatherData[data_idx].temp;
 
-      // CALCULATE COORDINATES MANUALLY
-      // X: Distribute evenly across graphWidth
-      // Y: Map value to height (inverted because Y grows down)
-
       int x_offset = (i * (graphWidth - 1)) / (g_window_size - 1);
       int y_offset =
           (int)((1.0f - (val - g_y_min) / (float)y_range) * (graphHeight - 1));
 
-      // APPLY OFFSETS
       lv_point_t p2;
       p2.x = graphX + x_offset;
       p2.y = graphY + y_offset;
 
-      // Draw Line
       if (has_p1) {
         lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
       }
@@ -310,7 +324,6 @@ static void chart_draw_event_cb(lv_event_t *e) {
       has_p1 = true;
     }
 
-    // Draw Points on top (second pass to ensure they are above lines)
     for (int i = 0; i < g_window_size; i++) {
       int data_idx = g_window_start + i;
       if (data_idx >= (int)weatherData.size())
@@ -351,8 +364,8 @@ static void update_chart_from_slider(lv_event_t *e) {
   g_window_start = start;
   g_window_size = window_size;
 
-  float min_val = 100.0f;
-  float max_val = -100.0f;
+  float min_val = 100000.0f;
+  float max_val = -100000.0f;
 
   for (int i = 0; i < window_size; i++) {
     float v = weatherData[start + i].temp;
@@ -366,6 +379,12 @@ static void update_chart_from_slider(lv_event_t *e) {
   int y_max = (int)ceil(max_val + 2.0f);
   g_y_min = y_min;
   g_y_max = y_max;
+
+  // Calculate dynamic margin based on data range
+  g_graph_margin_left = calculate_margin_for_range(y_min, y_max);
+
+  // Update chart padding to match new margin
+  lv_obj_set_style_pad_left(chart, g_graph_margin_left, LV_PART_MAIN);
 
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, y_min, y_max);
   lv_chart_set_point_count(chart, window_size);
@@ -398,7 +417,7 @@ static void create_ui() {
   lv_obj_t *t1 = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t1, lv_color_white(), 0);
   lv_obj_t *splash_label = lv_label_create(t1);
-  lv_label_set_text(splash_label, "Group 1\nVersion 0.3");
+  lv_label_set_text(splash_label, "Group 1\nVersion 0.7");
   lv_obj_set_style_text_font(splash_label, &lv_font_montserrat_28, 0);
   lv_obj_center(splash_label);
 
@@ -424,66 +443,44 @@ static void create_ui() {
   lv_obj_t *t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t4, lv_color_white(), 0);
 
-  // --- CHART SETUP START ---
   chart = lv_chart_create(t4);
-
-  // 1. RESET: Remove all styles to prevent white-text defaults
   lv_obj_remove_style_all(chart);
-
-  // 2. SIZE
   lv_obj_set_size(chart, lv_disp_get_hor_res(NULL) - 20,
                   lv_disp_get_ver_res(NULL) - 90);
   lv_obj_align(chart, LV_ALIGN_TOP_MID, 0, 10);
 
-  // 3. BACKGROUND (Transparent - we draw it manually)
   lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_border_width(chart, 0, LV_PART_MAIN);
   lv_obj_set_style_radius(chart, 0, LV_PART_MAIN);
 
-  // 4. GRID LINES
   lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
   lv_obj_set_style_line_color(chart, lv_color_make(220, 220, 220),
                               LV_PART_MAIN);
 
-  // 5. SERIES STYLES
-  // HIDE default series lines and points (we draw them manually)
   lv_obj_set_style_line_opa(chart, LV_OPA_TRANSP, LV_PART_ITEMS);
   lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, LV_PART_INDICATOR);
-  lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR); // Ensure size is 0
+  lv_obj_set_style_size(chart, 0, LV_PART_INDICATOR);
 
-  // 6. PADDING (Matches fixed margins)
-  // This ensures data points are mapped to the correct area
-  lv_obj_set_style_pad_left(chart, GRAPH_MARGIN_LEFT, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(chart, g_graph_margin_left, LV_PART_MAIN);
   lv_obj_set_style_pad_right(chart, GRAPH_MARGIN_RIGHT, LV_PART_MAIN);
   lv_obj_set_style_pad_top(chart, GRAPH_MARGIN_TOP, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(chart, GRAPH_MARGIN_BOTTOM, LV_PART_MAIN);
 
-  // 7. TEXT STYLE
-  // Use a readable font for axis labels
   lv_obj_set_style_text_font(chart, &lv_font_montserrat_14, LV_PART_TICKS);
-  // Force BLACK text on all parts
   lv_obj_set_style_text_color(chart, lv_color_black(), LV_PART_MAIN);
   lv_obj_set_style_text_color(chart, lv_color_black(), LV_PART_TICKS);
 
-  // 8. TICK MARKS
   lv_obj_set_style_line_color(chart, lv_color_black(), LV_PART_TICKS);
   lv_obj_set_style_line_width(chart, 1, LV_PART_TICKS);
 
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_obj_set_scrollbar_mode(chart, LV_SCROLLBAR_MODE_OFF);
 
-  // 9. OVERFLOW
-  // Removed LV_OBJ_FLAG_OVERFLOW_VISIBLE to ensure lines are clipped to the
-  // graph area lv_obj_add_flag(chart, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-
-  // Callback - Listen to ALL events to handle MAIN_DRAW
   lv_obj_add_event_cb(chart, chart_draw_event_cb, LV_EVENT_ALL, NULL);
 
   series = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE),
                                LV_CHART_AXIS_PRIMARY_Y);
 
-  // 10. AXIS CONFIG
-  // draw_size matched to padding to prevent clipping
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 8, 4, 6, 2, true, 100);
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 8, 4, 5, 2, true, 30);
 
@@ -494,7 +491,6 @@ static void create_ui() {
   lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -8);
   lv_slider_set_range(slider, 0, 100);
   setup_weather_screen();
-  // --- CHART SETUP END ---
 
   // 5. Settings
   t5 = lv_tileview_add_tile(tileview, 4, 0, LV_DIR_HOR);
@@ -568,20 +564,36 @@ void loop() {
   if (wifi_connected && stations_loaded && !initial_data_fetched) {
     initial_data_fetched = true;
 
-    int station_idx = 0;
-    int param_idx = 0;
+    // Default values
+    int station_idx = -1;
+    int param_code = 1;
+    String city_name = "Karlskrona";  // Default city
 
+    // Find default Karlskrona station
     for (size_t i = 0; i < gStations.size(); ++i) {
-      if (gStations[i].name.equalsIgnoreCase("Karlskrona")) {
+      if (gStations[i].name.equalsIgnoreCase("Karlskrona") ||
+          gStations[i].name.startsWith("Karlskrona")) {
         station_idx = (int)i;
         break;
       }
     }
 
+    // Try to find any station with "Karlskrona" in the name
+    if (station_idx < 0) {
+      for (size_t i = 0; i < gStations.size(); ++i) {
+        if (gStations[i].name.indexOf("Karlskrona") >= 0) {
+          station_idx = (int)i;
+          break;
+        }
+      }
+    }
+
+    // Load saved preferences (override defaults if present)
     Preferences prefs;
     if (prefs.begin("weather", true)) {
       String st_id = prefs.getString("station_id", "");
-      param_idx = prefs.getInt("param_idx", 0);
+      int saved_param = prefs.getInt("param_code", -1);
+      String saved_city = prefs.getString("city_name", "");
       prefs.end();
 
       if (!st_id.isEmpty()) {
@@ -592,16 +604,33 @@ void loop() {
           }
         }
       }
+      
+      if (saved_param > 0) {
+        param_code = saved_param;
+      }
+      
+      if (!saved_city.isEmpty()) {
+        city_name = saved_city;
+      }
+      
+      Serial.printf("Loaded settings: station_id=%s, param_code=%d, city=%s\n",
+                    st_id.c_str(), param_code, city_name.c_str());
     }
 
-    if (gStations.empty())
-      station_idx = -1;
+    // If still no station found, use first available
+    if (station_idx < 0 && !gStations.empty()) {
+      station_idx = 0;
+      city_name = "Stockholm";  // Default to first city in list
+    }
+
+    Serial.printf("Using station_idx=%d, param_code=%d, city=%s\n",
+                  station_idx, param_code, city_name.c_str());
 
     if (station_idx >= 0) {
-      weather.update_weather_data(station_idx, param_idx, "latest-months");
+      weather.update_weather_data(station_idx, param_code, "latest-months");
       update_chart_from_slider(NULL);
       TodayForecast_OnStationSelected(station_idx);
-      settings_sync_state(station_idx, param_idx);
+      settings_sync_state(station_idx, param_code, city_name);
     }
 
     std::vector<DailyWeather> mock_forecast = {
