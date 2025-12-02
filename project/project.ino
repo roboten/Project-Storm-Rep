@@ -17,7 +17,6 @@
 #include "smhiApi.hpp"
 #include "stationPicker.hpp"
 #include "todayForecast.hpp"
-#include "upcomingWeek.hpp"
 
 // --------------------------------------------------------------------
 // Wi-Fi
@@ -36,7 +35,7 @@ LilyGo_Class amoled;
 SMHI_API weather(
     "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/");
 
-lv_obj_t *t5 = NULL;
+lv_obj_t *t4 = NULL;
 lv_obj_t *t2 = NULL;
 
 std::vector<StationInfo> gStations;
@@ -49,7 +48,6 @@ static lv_obj_t *tileview = NULL;
 static lv_obj_t *chart = NULL;
 static lv_chart_series_t *series = NULL;
 static lv_obj_t *slider = NULL;
-static lv_obj_t *forecast_container = NULL;
 
 // States
 static bool wifi_connected = false;
@@ -78,7 +76,6 @@ static void setup_weather_screen();
 static void chart_draw_event_cb(lv_event_t *e);
 static void update_chart_from_slider(lv_event_t *e);
 static int calculate_margin_for_range(int y_min, int y_max);
-void update_7day_forecast_ui(const std::vector<DailyWeather> &forecast);
 
 // --------------------------------------------------------------------
 // Wi-Fi
@@ -106,7 +103,7 @@ static void connect_wifi_non_blocking() {
 
 static const char *get_day_name(const String &date_str) {
   static char day_buf[12];
-  
+
   // YYYY-MM-DD format (10+ chars) -> show MM/DD
   if (date_str.length() >= 10) {
     int day = date_str.substring(8, 10).toInt();
@@ -114,29 +111,15 @@ static const char *get_day_name(const String &date_str) {
     snprintf(day_buf, sizeof(day_buf), "%02d/%02d", month, day);
     return day_buf;
   }
-  
+
   // YYYY-MM format (7 chars) -> show month name or MM/YYYY
   if (date_str.length() >= 7) {
     int month = date_str.substring(5, 7).toInt();
-    int year = date_str.substring(2, 4).toInt(); // Last 2 digits of year
-    
-    // Option 1: Show as MM/YY
+    int year = date_str.substring(2, 4).toInt();
     snprintf(day_buf, sizeof(day_buf), "%02d/%02d", month, year);
     return day_buf;
-    
-    // Option 2: Show month abbreviation (uncomment if preferred)
-    /*
-    static const char* months[] = {
-      "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    };
-    if (month >= 1 && month <= 12) {
-      snprintf(day_buf, sizeof(day_buf), "%s", months[month - 1]);
-      return day_buf;
-    }
-    */
   }
-  
+
   return "";
 }
 
@@ -150,9 +133,9 @@ static int calculate_margin_for_range(int y_min, int y_max) {
     max_val /= 10;
     digits++;
   }
-  if (y_min < 0) digits++; // Account for minus sign
-  
-  // ~9 pixels per digit with montserrat_14, plus padding
+  if (y_min < 0)
+    digits++;
+
   return max(32, digits * 9 + 20);
 }
 
@@ -380,10 +363,8 @@ static void update_chart_from_slider(lv_event_t *e) {
   g_y_min = y_min;
   g_y_max = y_max;
 
-  // Calculate dynamic margin based on data range
   g_graph_margin_left = calculate_margin_for_range(y_min, y_max);
 
-  // Update chart padding to match new margin
   lv_obj_set_style_pad_left(chart, g_graph_margin_left, LV_PART_MAIN);
 
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, y_min, y_max);
@@ -417,33 +398,20 @@ static void create_ui() {
   lv_obj_t *t1 = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t1, lv_color_white(), 0);
   lv_obj_t *splash_label = lv_label_create(t1);
-  lv_label_set_text(splash_label, "Group 1\nVersion 0.7");
+  lv_label_set_text(splash_label, "Group 1\nVersion 0.8");
   lv_obj_set_style_text_font(splash_label, &lv_font_montserrat_28, 0);
   lv_obj_center(splash_label);
 
-  // 2. Today
+  // 2. 7-Day Forecast
   t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t2, lv_color_white(), 0);
   TodayForecast_CreateOn(t2);
 
-  // 3. 7-Day
+  // 3. Chart
   lv_obj_t *t3 = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t3, lv_color_white(), 0);
-  forecast_container = lv_obj_create(t3);
-  lv_obj_set_size(forecast_container, lv_disp_get_hor_res(NULL) - 20,
-                  lv_disp_get_ver_res(NULL) - 40);
-  lv_obj_align(forecast_container, LV_ALIGN_TOP_MID, 0, 10);
-  lv_obj_set_style_bg_color(forecast_container,
-                            lv_color_lighten(lv_color_hex(0x3366FF), 50), 0);
-  lv_obj_set_flex_flow(forecast_container, LV_FLEX_FLOW_ROW_WRAP);
-  lv_obj_set_flex_align(forecast_container, LV_FLEX_ALIGN_SPACE_EVENLY,
-                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
 
-  // 4. Chart
-  lv_obj_t *t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
-  lv_obj_set_style_bg_color(t4, lv_color_white(), 0);
-
-  chart = lv_chart_create(t4);
+  chart = lv_chart_create(t3);
   lv_obj_remove_style_all(chart);
   lv_obj_set_size(chart, lv_disp_get_hor_res(NULL) - 20,
                   lv_disp_get_ver_res(NULL) - 90);
@@ -486,51 +454,18 @@ static void create_ui() {
 
   lv_chart_set_div_line_count(chart, 5, 6);
 
-  slider = lv_slider_create(t4);
+  slider = lv_slider_create(t3);
   lv_obj_set_width(slider, lv_disp_get_hor_res(NULL) - 40);
   lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -8);
   lv_slider_set_range(slider, 0, 100);
   setup_weather_screen();
 
-  // 5. Settings
-  t5 = lv_tileview_add_tile(tileview, 4, 0, LV_DIR_HOR);
-  lv_obj_set_style_bg_color(t5, lv_color_white(), 0);
+  // 4. Settings
+  t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
+  lv_obj_set_style_bg_color(t4, lv_color_white(), 0);
   create_settings_tile();
 
   lv_scr_load_anim(tileview, LV_SCR_LOAD_ANIM_FADE_IN, 500, 0, false);
-}
-
-void update_7day_forecast_ui(const std::vector<DailyWeather> &forecast) {
-  if (!forecast_container)
-    return;
-  lv_obj_clean(forecast_container);
-
-  if (forecast.empty()) {
-    lv_obj_t *no_data_label = lv_label_create(forecast_container);
-    lv_label_set_text(no_data_label, "No forecast data available.");
-    lv_obj_center(no_data_label);
-    return;
-  }
-
-  for (const auto &day : forecast) {
-    lv_obj_t *day_card = lv_obj_create(forecast_container);
-    lv_obj_set_size(day_card, 90, 120);
-    lv_obj_set_style_bg_color(day_card, lv_color_hex(0xE0E0E0), 0);
-    lv_obj_set_style_border_width(day_card, 1, 0);
-    lv_obj_set_style_radius(day_card, 8, 0);
-
-    lv_obj_t *date_label = lv_label_create(day_card);
-    lv_label_set_text_fmt(date_label, "%s", day.date.c_str());
-    lv_obj_align(date_label, LV_ALIGN_TOP_MID, 0, 4);
-
-    lv_obj_t *temp_label = lv_label_create(day_card);
-    lv_label_set_text_fmt(temp_label, "%.1f/%.1f°C", day.tempMin, day.tempMax);
-    lv_obj_align(temp_label, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t *symbol_label = lv_label_create(day_card);
-    lv_label_set_text_fmt(symbol_label, "%d", day.symbolCode);
-    lv_obj_align(symbol_label, LV_ALIGN_BOTTOM_MID, 0, -4);
-  }
 }
 
 // --------------------------------------------------------------------
@@ -564,12 +499,10 @@ void loop() {
   if (wifi_connected && stations_loaded && !initial_data_fetched) {
     initial_data_fetched = true;
 
-    // Default values
     int station_idx = -1;
     int param_code = 1;
-    String city_name = "Karlskrona";  // Default city
+    String city_name = "Karlskrona";
 
-    // Find default Karlskrona station
     for (size_t i = 0; i < gStations.size(); ++i) {
       if (gStations[i].name.equalsIgnoreCase("Karlskrona") ||
           gStations[i].name.startsWith("Karlskrona")) {
@@ -578,7 +511,6 @@ void loop() {
       }
     }
 
-    // Try to find any station with "Karlskrona" in the name
     if (station_idx < 0) {
       for (size_t i = 0; i < gStations.size(); ++i) {
         if (gStations[i].name.indexOf("Karlskrona") >= 0) {
@@ -588,7 +520,6 @@ void loop() {
       }
     }
 
-    // Load saved preferences (override defaults if present)
     Preferences prefs;
     if (prefs.begin("weather", true)) {
       String st_id = prefs.getString("station_id", "");
@@ -604,27 +535,26 @@ void loop() {
           }
         }
       }
-      
+
       if (saved_param > 0) {
         param_code = saved_param;
       }
-      
+
       if (!saved_city.isEmpty()) {
         city_name = saved_city;
       }
-      
+
       Serial.printf("Loaded settings: station_id=%s, param_code=%d, city=%s\n",
                     st_id.c_str(), param_code, city_name.c_str());
     }
 
-    // If still no station found, use first available
     if (station_idx < 0 && !gStations.empty()) {
       station_idx = 0;
-      city_name = "Stockholm";  // Default to first city in list
+      city_name = "Stockholm";
     }
 
-    Serial.printf("Using station_idx=%d, param_code=%d, city=%s\n",
-                  station_idx, param_code, city_name.c_str());
+    Serial.printf("Using station_idx=%d, param_code=%d, city=%s\n", station_idx,
+                  param_code, city_name.c_str());
 
     if (station_idx >= 0) {
       weather.update_weather_data(station_idx, param_code, "latest-months");
@@ -632,16 +562,6 @@ void loop() {
       TodayForecast_OnStationSelected(station_idx);
       settings_sync_state(station_idx, param_code, city_name);
     }
-
-    std::vector<DailyWeather> mock_forecast = {
-        {String("2025-11-21"), 5.0, 10.0, 80.0, 0.0, 1},
-        {String("2025-11-22"), 6.0, 11.0, 75.0, 0.0, 2},
-        {String("2025-11-23"), 7.0, 12.0, 70.0, 0.0, 3},
-        {String("2025-11-24"), 8.0, 13.0, 65.0, 0.0, 4},
-        {String("2025-11-25"), 9.0, 14.0, 60.0, 0.0, 5},
-        {String("2025-11-26"), 10.0, 15.0, 55.0, 0.0, 6},
-        {String("2025-11-27"), 11.0, 16.0, 50.0, 0.0, 7}};
-    update_7day_forecast_ui(mock_forecast);
   }
 
   delay(5);

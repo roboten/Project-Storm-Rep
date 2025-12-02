@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-extern lv_obj_t *t5;
+extern lv_obj_t *t4;
 extern SMHI_API weather;
 extern void TodayForecast_OnStationSelected(int station_idx);
 
@@ -485,7 +485,7 @@ static void kb_event_cb(lv_event_t *e) {
 static void ta_event_cb(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_FOCUSED && !kb) {
-    kb = lv_keyboard_create(t5);
+    kb = lv_keyboard_create(t4);
     lv_keyboard_set_textarea(kb, search_box);
     lv_obj_add_flag(kb, LV_OBJ_FLAG_GESTURE_BUBBLE);
     lv_obj_add_flag(kb, LV_OBJ_FLAG_SCROLL_CHAIN_HOR);
@@ -762,22 +762,22 @@ static void print_cache_stats() {
 // Create Settings tile
 // ------------------------------------------------------------------
 static void create_settings_tile() {
-  search_box = lv_textarea_create(t5);
+  search_box = lv_textarea_create(t4);
   lv_textarea_set_one_line(search_box, true);
   lv_textarea_set_placeholder_text(search_box, "Search city...");
   lv_obj_set_size(search_box, 220, 40);
   lv_obj_align(search_box, LV_ALIGN_TOP_MID, 0, 15);
   lv_obj_add_event_cb(search_box, ta_event_cb, LV_EVENT_ALL, NULL);
 
-  city_dropdown = lv_dropdown_create(t5);
+  city_dropdown = lv_dropdown_create(t4);
   lv_obj_align(city_dropdown, LV_ALIGN_TOP_MID, 0, 70);
   lv_dropdown_set_options(city_dropdown, "Loading cities...\n");
 
-  param_dropdown = lv_dropdown_create(t5);
+  param_dropdown = lv_dropdown_create(t4);
   lv_dropdown_set_options(param_dropdown, "Select city first...\n");
   lv_obj_align(param_dropdown, LV_ALIGN_TOP_MID, 0, 130);
 
-  param_loading_label = lv_label_create(t5);
+  param_loading_label = lv_label_create(t4);
   lv_label_set_text(param_loading_label, "Checking parameters...");
   lv_obj_align(param_loading_label, LV_ALIGN_TOP_MID, 0, 175);
   lv_obj_set_style_text_color(param_loading_label, lv_color_hex(0x666666), 0);
@@ -790,7 +790,7 @@ static void create_settings_tile() {
 
   settings_update_city_options();
 
-  lv_obj_t *save_btn = lv_btn_create(t5);
+  lv_obj_t *save_btn = lv_btn_create(t4);
   lv_obj_set_size(save_btn, 140, 60);
   lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 20, -20);
   lv_obj_add_event_cb(save_btn, save_btn_event_cb, LV_EVENT_CLICKED, NULL);
@@ -798,7 +798,7 @@ static void create_settings_tile() {
   lv_label_set_text(save_label, "Set Default");
   lv_obj_center(save_label);
 
-  lv_obj_t *reset_btn = lv_btn_create(t5);
+  lv_obj_t *reset_btn = lv_btn_create(t4);
   lv_obj_set_size(reset_btn, 140, 60);
   lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
   lv_obj_add_event_cb(reset_btn, reset_btn_event_cb, LV_EVENT_CLICKED, NULL);
