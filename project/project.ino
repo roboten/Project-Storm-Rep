@@ -13,59 +13,73 @@
 
 #include "time.h"
 
+#include "7dayForecast.hpp"
 #include "settingsTile.hpp"
 #include "smhiApi.hpp"
 #include "stationPicker.hpp"
-#include "todayForecast.hpp"
 
 // --------------------------------------------------------------------
-// Wi-Fi
+// Wi-Fi Configuration
+// Network credentials for connecting to WiFi
 // --------------------------------------------------------------------
 const char *WIFI_SSID = "Nothing";
 const char *WIFI_PASSWORD = "hacM3Plz";
 
+// NTP (Network Time Protocol) configuration for time synchronization
 const char *ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 3600;
-const int daylightOffset_sec = 3600;
+const long gmtOffset_sec = 3600;     // GMT+1 (Swedish timezone)
+const int daylightOffset_sec = 3600; // +1 hour for daylight saving time
 
 // --------------------------------------------------------------------
-// Globals
+// Global Objects
+// Core application objects and data structures
 // --------------------------------------------------------------------
-LilyGo_Class amoled;
-SMHI_API weather(
-    "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/");
+LilyGo_Class amoled; // AMOLED display driver instance
+// SMHI API wrapper for fetching meteorological observation data
+SMHI_API weather("https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/");
 
-lv_obj_t *t4 = NULL;
-lv_obj_t *t2 = NULL;
+// UI tile objects (used across multiple files)
+lv_obj_t *t4 = NULL; // Settings tile
+lv_obj_t *t2 = NULL; // 7-day forecast tile
 
-std::vector<StationInfo> gStations;
-std::vector<DataPoint> weatherData;
-
-// --------------------------------------------------------------------
-// UI state
-// --------------------------------------------------------------------
-static lv_obj_t *tileview = NULL;
-static lv_obj_t *chart = NULL;
-static lv_chart_series_t *series = NULL;
-static lv_obj_t *slider = NULL;
-
-// States
-static bool wifi_connected = false;
-static bool stations_loaded = false;
-static bool initial_data_fetched = false;
-
-static int g_window_start = 0;
-static int g_window_size = 0;
-static int g_y_min = -10;
-static int g_y_max = 20;
+// Global data storage
+std::vector<StationInfo> gStations; // All available SMHI weather stations
+std::vector<DataPoint> weatherData; // Current weather data points for graphing
 
 // --------------------------------------------------------------------
-// Graph Margins (left margin is now dynamic)
+// UI State Variables
+// Track UI components and application state
 // --------------------------------------------------------------------
-static int g_graph_margin_left = 32;
-static const int GRAPH_MARGIN_RIGHT = 20;
-static const int GRAPH_MARGIN_TOP = 20;
-static const int GRAPH_MARGIN_BOTTOM = 40;
+static lv_obj_t *tileview = NULL; // Main tileview container (4 tiles: splash,
+                                  // forecast, chart, settings)
+static lv_obj_t *chart =
+    NULL; // Line chart object for weather data visualization
+static lv_chart_series_t *series = NULL; // Data series for the chart
+static lv_obj_t *slider = NULL; // Slider for scrolling through historical data
+
+// Application state flags
+static bool wifi_connected = false;  // True when WiFi connection is established
+static bool stations_loaded = false; // True when station list has been loaded
+static bool initial_data_fetched =
+    false; // True when first weather data fetch is complete
+
+// Chart windowing and scaling variables
+static int g_window_start =
+    0; // Index of first data point in current view window
+static int g_window_size = 0; // Number of data points to display in window
+static int g_y_min = -10;     // Minimum Y-axis value (temperature)
+static int g_y_max = 20;      // Maximum Y-axis value (temperature)
+
+// --------------------------------------------------------------------
+// Graph Margins
+// Control spacing around the chart drawing area
+// Left margin is dynamic based on Y-axis label width
+// --------------------------------------------------------------------
+static int g_graph_margin_left = 32; // Dynamically adjusted for Y-axis labels
+static const int GRAPH_MARGIN_RIGHT = 20; // Fixed right margin
+static const int GRAPH_MARGIN_TOP = 20;   // Fixed top margin
+static const int GRAPH_MARGIN_BOTTOM =
+    40; // Fixed bottom margin for X-axis labels
 
 // --------------------------------------------------------------------
 // Forward declarations
@@ -78,12 +92,14 @@ static void update_chart_from_slider(lv_event_t *e);
 static int calculate_margin_for_range(int y_min, int y_max);
 
 // --------------------------------------------------------------------
-// Wi-Fi
+// WiFi Connection Management
+// Non-blocking WiFi connection with automatic retry on timeout
 // --------------------------------------------------------------------
 static void connect_wifi_non_blocking() {
   static bool wifi_started = false;
   static uint32_t start_time = 0;
 
+  // Start WiFi connection on first call
   if (!wifi_started) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -91,16 +107,24 @@ static void connect_wifi_non_blocking() {
     start_time = millis();
   }
 
+  // Configure NTP time sync once connected
   if (WiFi.status() == WL_CONNECTED && !wifi_connected) {
     wifi_connected = true;
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  } else if (WiFi.status() != WL_CONNECTED && millis() - start_time > 30000) {
+  }
+  // Retry connection after 30 second timeout
+  else if (WiFi.status() != WL_CONNECTED && millis() - start_time > 30000) {
     WiFi.disconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     start_time = millis();
   }
 }
 
+/**
+ * Convert date string to display format
+ * Handles both daily (YYYY-MM-DD) and monthly (YYYY-MM) formats
+ * Returns a human-readable date string for X-axis labels
+ */
 static const char *get_day_name(const String &date_str) {
   static char day_buf[12];
 
@@ -124,34 +148,46 @@ static const char *get_day_name(const String &date_str) {
 }
 
 // --------------------------------------------------------------------
-// Calculate margin based on data range
+// Dynamic Margin Calculation
+// Calculate left margin based on Y-axis value range
+// Ensures Y-axis labels don't get cut off for large numbers
 // --------------------------------------------------------------------
 static int calculate_margin_for_range(int y_min, int y_max) {
+  // Find the largest absolute value to determine digit count
   int max_val = max(abs(y_min), abs(y_max));
   int digits = 1;
   while (max_val >= 10) {
     max_val /= 10;
     digits++;
   }
+  // Add extra space if negative sign is needed
   if (y_min < 0)
     digits++;
 
+  // Calculate margin: ~9 pixels per digit + 20 pixel padding, minimum 32
   return max(32, digits * 9 + 20);
 }
 
 // --------------------------------------------------------------------
-// Chart Callback
+// Chart Drawing Event Callback
+// Handles custom drawing for the weather chart including:
+// - Graph background and border
+// - Y-axis temperature labels (right-aligned in left margin)
+// - X-axis date labels
+// - Data point lines and markers
 // --------------------------------------------------------------------
 static void chart_draw_event_cb(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   lv_obj_t *obj = lv_event_get_target(e);
 
+  // Draw graph background and border before main content
   if (code == LV_EVENT_DRAW_MAIN_BEGIN) {
     lv_draw_ctx_t *draw_ctx = (lv_draw_ctx_t *)lv_event_get_param(e);
 
     lv_area_t coords;
     lv_obj_get_coords(obj, &coords);
 
+    // Calculate actual graph drawing area (inside margins)
     int graphX = coords.x1 + g_graph_margin_left;
     int graphY = coords.y1 + GRAPH_MARGIN_TOP;
     int graphWidth =
@@ -177,13 +213,16 @@ static void chart_draw_event_cb(lv_event_t *e) {
     return;
   }
 
+  // Custom axis label drawing
   if (code == LV_EVENT_DRAW_PART_BEGIN) {
     lv_obj_draw_part_dsc_t *dsc = lv_event_get_draw_part_dsc(e);
 
+    // Only process tick labels
     if (!lv_obj_draw_part_check_type(dsc, &lv_chart_class,
                                      LV_CHART_DRAW_PART_TICK_LABEL))
       return;
 
+    // Draw Y-axis temperature labels (right-aligned in left margin)
     if (dsc->id == LV_CHART_AXIS_PRIMARY_Y) {
       char buf[16];
       lv_snprintf(buf, sizeof(buf), "%.0f", (float)dsc->value);
@@ -212,13 +251,15 @@ static void chart_draw_event_cb(lv_event_t *e) {
       return;
     }
 
+    // Draw X-axis date labels
     if (dsc->id == LV_CHART_AXIS_PRIMARY_X && dsc->text) {
       if (weatherData.empty() || g_window_size == 0)
         return;
 
       int tick_idx = (int)(dsc->value + 0.5f);
-      int major_cnt = 5;
+      int major_cnt = 5; // Number of major ticks on X-axis
 
+      // Map tick index to actual data point in window
       int idx_in_window = 0;
       if (major_cnt > 1 && g_window_size > 1) {
         idx_in_window = (tick_idx * (g_window_size - 1)) / (major_cnt - 1);
@@ -246,6 +287,7 @@ static void chart_draw_event_cb(lv_event_t *e) {
     }
   }
 
+  // Draw data lines and points after main chart is rendered
   if (code == LV_EVENT_DRAW_POST) {
     lv_draw_ctx_t *draw_ctx = (lv_draw_ctx_t *)lv_event_get_param(e);
 
@@ -277,6 +319,7 @@ static void chart_draw_event_cb(lv_event_t *e) {
     point_dsc.border_width = 2;
     point_dsc.radius = LV_RADIUS_CIRCLE;
 
+    // Calculate Y-axis range for scaling data points
     int y_range = g_y_max - g_y_min;
     if (y_range <= 0)
       y_range = 1;
@@ -284,6 +327,7 @@ static void chart_draw_event_cb(lv_event_t *e) {
     lv_point_t p1;
     bool has_p1 = false;
 
+    // Draw lines connecting data points
     for (int i = 0; i < g_window_size; i++) {
       int data_idx = g_window_start + i;
       if (data_idx >= (int)weatherData.size())
@@ -291,7 +335,9 @@ static void chart_draw_event_cb(lv_event_t *e) {
 
       float val = weatherData[data_idx].temp;
 
+      // Calculate position within graph bounds
       int x_offset = (i * (graphWidth - 1)) / (g_window_size - 1);
+      // Invert Y (higher temps at top) and scale to graph height
       int y_offset =
           (int)((1.0f - (val - g_y_min) / (float)y_range) * (graphHeight - 1));
 
@@ -307,6 +353,7 @@ static void chart_draw_event_cb(lv_event_t *e) {
       has_p1 = true;
     }
 
+    // Draw circular markers at each data point
     for (int i = 0; i < g_window_size; i++) {
       int data_idx = g_window_start + i;
       if (data_idx >= (int)weatherData.size())
@@ -330,7 +377,9 @@ static void chart_draw_event_cb(lv_event_t *e) {
 }
 
 // --------------------------------------------------------------------
-// Update Chart
+// Chart Update from Slider
+// Updates visible data window and Y-axis range based on slider position
+// Recalculates margins dynamically for proper label sizing
 // --------------------------------------------------------------------
 static void update_chart_from_slider(lv_event_t *e) {
   if (!slider || !chart)
@@ -340,13 +389,15 @@ static void update_chart_from_slider(lv_event_t *e) {
 
   int slider_value = lv_slider_get_value(slider);
   int total = (int)weatherData.size();
-  const int max_points = 50;
+  const int max_points = 50; // Limit visible points for performance
   int window_size = min(max_points, total);
+  // Map slider (0-100) to data range
   int start = map(slider_value, 0, 100, 0, max(0, total - window_size));
 
   g_window_start = start;
   g_window_size = window_size;
 
+  // Find min/max temperature in current window for Y-axis scaling
   float min_val = 100000.0f;
   float max_val = -100000.0f;
 
@@ -358,18 +409,23 @@ static void update_chart_from_slider(lv_event_t *e) {
       max_val = v;
   }
 
+  // Add padding to Y-axis range for better visibility
   int y_min = (int)floor(min_val - 2.0f);
   int y_max = (int)ceil(max_val + 2.0f);
   g_y_min = y_min;
   g_y_max = y_max;
 
+  // Recalculate left margin based on new Y-axis values
   g_graph_margin_left = calculate_margin_for_range(y_min, y_max);
 
+  // Apply new margin to chart
   lv_obj_set_style_pad_left(chart, g_graph_margin_left, LV_PART_MAIN);
 
+  // Update chart with new range and data
   lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, y_min, y_max);
   lv_chart_set_point_count(chart, window_size);
 
+  // Populate chart data points
   for (int i = 0; i < window_size; i++) {
     float v = weatherData[start + i].temp;
     lv_chart_set_value_by_id(chart, series, i, v);
@@ -386,7 +442,12 @@ static void setup_weather_screen() {
 }
 
 // --------------------------------------------------------------------
-// Create UI
+// UI Creation
+// Creates a 4-tile horizontal tileview:
+// Tile 0: Splash screen
+// Tile 1: 7-day forecast
+// Tile 2: Historical data chart with slider
+// Tile 3: Settings page
 // --------------------------------------------------------------------
 static void create_ui() {
   tileview = lv_tileview_create(NULL);
@@ -394,25 +455,28 @@ static void create_ui() {
   lv_obj_add_flag(tileview, LV_OBJ_FLAG_SCROLL_MOMENTUM);
   lv_obj_clear_flag(tileview, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
-  // 1. Splash
+  // Tile 1: Splash screen with version info
   lv_obj_t *t1 = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t1, lv_color_white(), 0);
   lv_obj_t *splash_label = lv_label_create(t1);
-  lv_label_set_text(splash_label, "Group 1\nVersion 0.8");
+  lv_label_set_text(splash_label, "Group 1\nVersion 0.9");
   lv_obj_set_style_text_font(splash_label, &lv_font_montserrat_28, 0);
   lv_obj_center(splash_label);
 
-  // 2. 7-Day Forecast
+  // Tile 2: 7-day weather forecast
   t2 = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t2, lv_color_white(), 0);
-  TodayForecast_CreateOn(t2);
+  SevenDayForecast_CreateOn(
+      t2); // Create forecast cards (defined in 7dayForecast.hpp)
 
-  // 3. Chart
+  // Tile 3: Historical data chart with custom drawing
   lv_obj_t *t3 = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t3, lv_color_white(), 0);
 
+  // Create chart with custom styling
   chart = lv_chart_create(t3);
-  lv_obj_remove_style_all(chart);
+  lv_obj_remove_style_all(chart); // Start with clean slate
+  // Size chart to fit screen with margins
   lv_obj_set_size(chart, lv_disp_get_hor_res(NULL) - 20,
                   lv_disp_get_ver_res(NULL) - 90);
   lv_obj_align(chart, LV_ALIGN_TOP_MID, 0, 10);
@@ -422,8 +486,7 @@ static void create_ui() {
   lv_obj_set_style_radius(chart, 0, LV_PART_MAIN);
 
   lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
-  lv_obj_set_style_line_color(chart, lv_color_make(220, 220, 220),
-                              LV_PART_MAIN);
+  lv_obj_set_style_line_color(chart, lv_color_make(220, 220, 220),LV_PART_MAIN);
 
   lv_obj_set_style_line_opa(chart, LV_OPA_TRANSP, LV_PART_ITEMS);
   lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, LV_PART_INDICATOR);
@@ -444,32 +507,37 @@ static void create_ui() {
   lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
   lv_obj_set_scrollbar_mode(chart, LV_SCROLLBAR_MODE_OFF);
 
+  // Register custom draw callback for manual line/point rendering
   lv_obj_add_event_cb(chart, chart_draw_event_cb, LV_EVENT_ALL, NULL);
 
-  series = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE),
-                               LV_CHART_AXIS_PRIMARY_Y);
+  // Create data series
+  series = lv_chart_add_series(chart, lv_palette_main(LV_PALETTE_BLUE),LV_CHART_AXIS_PRIMARY_Y);
 
+  // Configure axis tick marks
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y, 8, 4, 6, 2, true, 100);
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_X, 8, 4, 5, 2, true, 30);
 
+  // Set grid line counts
   lv_chart_set_div_line_count(chart, 5, 6);
 
+  // Create slider for scrolling through historical data
   slider = lv_slider_create(t3);
   lv_obj_set_width(slider, lv_disp_get_hor_res(NULL) - 40);
   lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -8);
-  lv_slider_set_range(slider, 0, 100);
-  setup_weather_screen();
+  lv_slider_set_range(slider, 0, 100); // 0 = oldest data, 100 = newest data
+  setup_weather_screen();              // Connect slider to chart update handler
 
-  // 4. Settings
+  // Tile 4: Settings page for city/parameter selection
   t4 = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_HOR);
   lv_obj_set_style_bg_color(t4, lv_color_white(), 0);
-  create_settings_tile();
+  create_settings_tile(); // Create settings UI (defined in settingsTile.hpp)
 
   lv_scr_load_anim(tileview, LV_SCR_LOAD_ANIM_FADE_IN, 500, 0, false);
 }
 
 // --------------------------------------------------------------------
-// Arduino Setup
+// Arduino Setup Function
+// Initializes display, LVGL, and UI
 // --------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
@@ -485,24 +553,36 @@ void setup() {
   create_ui();
 }
 
+/**
+ * Main Loop
+ * Handles:
+ * - LVGL timer updates for UI
+ * - Non-blocking WiFi connection
+ * - Station list loading once WiFi is connected
+ * - Initial weather data fetch with saved preferences
+ */
 void loop() {
-  lv_timer_handler();
-  connect_wifi_non_blocking();
+  lv_timer_handler();          // Process LVGL UI updates
+  connect_wifi_non_blocking(); // Maintain WiFi connection
 
+  // Load station list once WiFi is connected
   if (wifi_connected && !stations_loaded) {
     stations_loaded = fetch_and_select_top_stations(10.0f, 50);
     if (stations_loaded) {
-      settings_update_city_options();
+      settings_update_city_options(); // Populate city dropdown
     }
   }
 
+  // Perform initial data fetch once after everything is loaded
   if (wifi_connected && stations_loaded && !initial_data_fetched) {
     initial_data_fetched = true;
 
+    // Default values if no saved preferences
     int station_idx = -1;
-    int param_code = 1;
+    int param_code = 1; // Temperature (1 hour)
     String city_name = "Karlskrona";
 
+    // Try to find Karlskrona station as default
     for (size_t i = 0; i < gStations.size(); ++i) {
       if (gStations[i].name.equalsIgnoreCase("Karlskrona") ||
           gStations[i].name.startsWith("Karlskrona")) {
@@ -520,8 +600,9 @@ void loop() {
       }
     }
 
+    // Load saved preferences (overrides defaults)
     Preferences prefs;
-    if (prefs.begin("weather", true)) {
+    if (prefs.begin("weather", true)) { // Read-only mode
       String st_id = prefs.getString("station_id", "");
       int saved_param = prefs.getInt("param_code", -1);
       String saved_city = prefs.getString("city_name", "");
@@ -556,11 +637,13 @@ void loop() {
     Serial.printf("Using station_idx=%d, param_code=%d, city=%s\n", station_idx,
                   param_code, city_name.c_str());
 
+    // Fetch and display initial weather data
     if (station_idx >= 0) {
       weather.update_weather_data(station_idx, param_code, "latest-months");
-      update_chart_from_slider(NULL);
-      TodayForecast_OnStationSelected(station_idx);
-      settings_sync_state(station_idx, param_code, city_name);
+      update_chart_from_slider(NULL); // Update chart with fetched data
+      SevenDayForecast_OnStationSelected(station_idx); // Update 7-day forecast
+      settings_sync_state(station_idx, param_code,
+                          city_name); // Sync settings UI
     }
   }
 

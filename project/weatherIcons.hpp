@@ -1,7 +1,17 @@
 #pragma once
 #include <lvgl.h>
 
-// Helper to draw a sun
+/**
+ * Weather Icon Drawing System
+ * Renders weather condition icons using simple geometric shapes
+ * Based on SMHI Wsymb2 weather symbol codes (1-27)
+ * Icons are composed of: sun, clouds, rain, snow, lightning, sleet
+ */
+
+// ------------------------------------------------------------------
+// Sun Icon Helper
+// Draws a circular sun at the specified size and color
+// ------------------------------------------------------------------
 static void draw_sun(lv_obj_t *parent, int size, int color_hex) {
   lv_obj_t *sun = lv_obj_create(parent);
   lv_obj_set_size(sun, size, size);
@@ -11,7 +21,11 @@ static void draw_sun(lv_obj_t *parent, int size, int color_hex) {
   lv_obj_align(sun, LV_ALIGN_CENTER, 0, 0);
 }
 
-// Helper to draw a cloud
+// ------------------------------------------------------------------
+// Cloud Icon Helper
+// Draws a cloud using multiple overlapping circles for a puffy appearance
+// Composed of: center body, left puff, right puff, and bottom filler
+// ------------------------------------------------------------------
 static void draw_cloud(lv_obj_t *parent, int size, int color_hex) {
   // Main cloud body (center)
   lv_obj_t *c1 = lv_obj_create(parent);
@@ -46,7 +60,10 @@ static void draw_cloud(lv_obj_t *parent, int size, int color_hex) {
   lv_obj_align(c4, LV_ALIGN_CENTER, 0, 8);
 }
 
-// Helper to draw rain drops
+// ------------------------------------------------------------------
+// Rain Icon Helper
+// Draws rain as blue vertical drops below the cloud
+// ------------------------------------------------------------------
 static void draw_rain(lv_obj_t *parent, int size) {
   for (int i = 0; i < 3; i++) {
     lv_obj_t *drop = lv_obj_create(parent);
@@ -58,7 +75,10 @@ static void draw_rain(lv_obj_t *parent, int size) {
   }
 }
 
-// Helper to draw lightning
+// ------------------------------------------------------------------
+// Lightning Icon Helper
+// Draws a lightning bolt using a rotated yellow rectangle
+// ------------------------------------------------------------------
 static void draw_lightning(lv_obj_t *parent, int size) {
   // Use a small rotated box for a simple bolt segment
   lv_obj_t *l1 = lv_obj_create(parent);
@@ -69,7 +89,10 @@ static void draw_lightning(lv_obj_t *parent, int size) {
   lv_obj_align(l1, LV_ALIGN_CENTER, 0, 5);
 }
 
-// Helper to draw snow
+// ------------------------------------------------------------------
+// Snow Icon Helper
+// Draws snow as white circular flakes
+// ------------------------------------------------------------------
 static void draw_snow(lv_obj_t *parent, int size) {
   for (int i = 0; i < 3; i++) {
     lv_obj_t *flake = lv_obj_create(parent);
@@ -81,7 +104,10 @@ static void draw_snow(lv_obj_t *parent, int size) {
   }
 }
 
-// Helper to draw sleet (rain + snow)
+// ------------------------------------------------------------------
+// Sleet Icon Helper
+// Draws sleet as a mix of rain drops (blue) and snow flakes (white)
+// ------------------------------------------------------------------
 static void draw_sleet(lv_obj_t *parent, int size) {
   // Rain drops
   for (int i = 0; i < 2; i++) {
@@ -103,12 +129,25 @@ static void draw_sleet(lv_obj_t *parent, int size) {
   }
 }
 
+/**
+ * Main Weather Icon Renderer
+ * Maps SMHI Wsymb2 symbol codes to visual representations
+ *
+ * Symbol codes:
+ * 1: Clear sky
+ * 2-4: Partly cloudy (sun + cloud)
+ * 5-7: Cloudy/Overcast/Fog
+ * 8-10, 18-20: Rain
+ * 11, 21: Thunderstorm
+ * 12-14, 22-24: Sleet
+ * 15-17, 25-27: Snow
+ */
 static void draw_weather_icon(lv_obj_t *parent, int s, int size) {
   if (s == 1) {
-    // Clear sky
+    // Clear sky - sun only
     draw_sun(parent, (int)(size * 0.75), 0xFFD700);
   } else if (s >= 2 && s <= 4) {
-    // Partly cloudy
+    // Partly cloudy - sun partially obscured by cloud
     draw_sun(parent, (int)(size * 0.75), 0xFFD700);
 
     lv_obj_t *c = lv_obj_create(parent);
@@ -121,24 +160,24 @@ static void draw_weather_icon(lv_obj_t *parent, int s, int size) {
     // Cloudy / Overcast / Fog
     draw_cloud(parent, size, 0xBBBBBB);
   } else if ((s >= 8 && s <= 10) || (s >= 18 && s <= 20)) {
-    // Rain
+    // Rain (light to heavy)
     draw_cloud(parent, size, 0x888888);
     draw_rain(parent, size);
   } else if (s == 11 || s == 21) {
-    // Thunderstorm / Thunder
+    // Thunderstorm
     draw_cloud(parent, size, 0x555555);
     draw_rain(parent, size);
     draw_lightning(parent, size);
   } else if ((s >= 12 && s <= 14) || (s >= 22 && s <= 24)) {
-    // Sleet
+    // Sleet (mixed rain and snow)
     draw_cloud(parent, size, 0x888888);
     draw_sleet(parent, size);
   } else if ((s >= 15 && s <= 17) || (s >= 25 && s <= 27)) {
-    // Snow
+    // Snow (light to heavy)
     draw_cloud(parent, size, 0xBBBBBB);
     draw_snow(parent, size);
   } else {
-    // Default / Unknown
+    // Unknown symbol - show question mark
     lv_obj_t *l = lv_label_create(parent);
     lv_label_set_text(l, "?");
     lv_obj_center(l);

@@ -7,16 +7,32 @@
 
 #include "stations.hpp"
 
+// Global station list defined in project.ino
 extern std::vector<StationInfo> gStations;
 
+/**
+ * Data Point Structure
+ * Represents a single weather measurement with date, time, and value
+ * Used for both historical observation data and forecast data
+ */
 struct DataPoint {
-  String date;
-  String time;
-  float temp;
+  String date; // YYYY-MM-DD or YYYY-MM format
+  String time; // HH:MM format
+  float temp;  // Temperature or other parameter value
 };
 
+// Global weather data storage (accessed from project.ino for chart rendering)
 extern std::vector<DataPoint> weatherData;
 
+/**
+ * Convert epoch milliseconds to date and time strings
+ * Applies timezone offset and formats as YYYY-MM-DD and HH:MM
+ *
+ * @param ms Epoch time in milliseconds
+ * @param outDate Output date string
+ * @param outTime Output time string
+ * @param tz_offset_minutes Timezone offset in minutes (default 0 for UTC)
+ */
 static inline void epoch_ms_to_date_time(uint64_t ms, String &outDate,
                                          String &outTime,
                                          int tz_offset_minutes = 0) {
@@ -37,32 +53,55 @@ static inline void epoch_ms_to_date_time(uint64_t ms, String &outDate,
   outTime = tBuf;
 }
 
-// Helper to safely parse a value that could be string, int, or float
+/**
+ * Safely Parse JSON Value to Float
+ * Handles multiple JSON value types (string, int, float)
+ * SMHI API sometimes returns numbers as strings, this handles all cases
+ */
 static float parseValueToFloat(JsonVariant val) {
   if (val.isNull()) {
     return 0.0f;
   }
-  
-  if (val.is<const char*>()) {
-    return atof(val.as<const char*>());
+
+  if (val.is<const char *>()) {
+    return atof(val.as<const char *>());
   }
-  
+
   if (val.is<float>()) {
     return val.as<float>();
   }
-  
+
   if (val.is<int>()) {
     return (float)val.as<int>();
   }
-  
+
   // Fallback
   return val.as<String>().toFloat();
 }
 
+/**
+ * SMHI_API Class
+ * Wrapper for SMHI (Swedish Meteorological and Hydrological Institute) API
+ * Fetches meteorological observation data and forecast data
+ *
+ * Uses streaming JSON parsing to minimize memory usage when handling
+ * large datasets (e.g., "latest-months" can contain thousands of data points)
+ */
 class SMHI_API {
 public:
   explicit SMHI_API(const char *apiRoot) : apiUrl(apiRoot) {}
 
+  /**
+   * Fetch Weather Data from SMHI API
+   *
+   * @param station_idx Index into gStations vector
+   * @param param_code SMHI parameter code (1=temp, 7=precip, etc.)
+   * @param period "latest-day", "latest-months", etc.
+   * @return true if data was successfully fetched and parsed
+   *
+   * Clears weatherData vector and populates it with new data
+   * Uses streaming parsing to handle large responses without excessive RAM
+   */
   bool update_weather_data(int station_idx, int param_code, String period) {
     weatherData.clear();
 
@@ -80,7 +119,7 @@ public:
     WiFiClientSecure client;
     client.setInsecure();
     client.setTimeout(15000);
-    
+
     HTTPClient https;
     https.setTimeout(15000);
 
@@ -95,79 +134,94 @@ public:
     }
 
     // Get stream instead of string to save memory
-    Stream& stream = https.getStream();
-    
+    Stream &stream = https.getStream();
+
     Serial.printf("SMHI: Response size: %d bytes\n", https.getSize());
 
     // Parse using streaming approach
     bool success = parseWeatherDataStream(stream);
-    
+
     https.end();
 
-    Serial.printf("SMHI: %s (%d points)\n", 
+    Serial.printf("SMHI: %s (%d points)\n",
                   success ? "Data OK" : "No data parsed",
                   (int)weatherData.size());
-    
+
     return success;
   }
 
-  bool parseWeatherDataStream(Stream& stream) {
+  /**
+   * Stream-based Weather Data Parser
+   *
+   * Parses SMHI observation API responses without loading entire JSON into
+   * memory Handles both hourly data (with epoch timestamps) and daily data
+   * (with dates)
+   *
+   * Data formats supported:
+   * - Hourly: { "date": 1753318800000, "value": "18.7" }
+   * - Daily:  { "ref": "2025-07-24", "value": "18.3" }
+   * - Fallback: { "from": timestamp, "value": "..." }
+   *
+   * @param stream HTTP response stream
+   * @return true if at least one data point was parsed
+   */
+  bool parseWeatherDataStream(Stream &stream) {
     weatherData.clear();
-    
-    // First, find the "value" array in the stream
+
+    // First, find the "value" array in the stream (observation API format)
     if (!stream.find("\"value\"")) {
       Serial.println("SMHI: 'value' key not found, trying 'timeSeries'");
-      
-      // Try timeSeries format (forecast API)
+
+      // Try timeSeries format (forecast API, though usually handled separately)
       if (!stream.find("\"timeSeries\"")) {
         Serial.println("SMHI: No recognized data array found");
         return false;
       }
       return parseTimeSeriesStream(stream);
     }
-    
+
     // Find the start of the array
     if (!stream.find("[")) {
       Serial.println("SMHI: Array start not found");
       return false;
     }
-    
+
     Serial.println("SMHI: Parsing value array...");
-    
-    // Create a filter to only parse what we need
+
+    // Create a JSON filter to parse only needed fields (memory optimization)
     StaticJsonDocument<128> filter;
-    filter["date"] = true;
-    filter["value"] = true;
-    filter["ref"] = true;
-    filter["from"] = true;
-    
+    filter["date"] = true;  // Epoch timestamp
+    filter["value"] = true; // Measurement value
+    filter["ref"] = true;   // Date reference (daily data)
+    filter["from"] = true;  // Alternative timestamp
+
     // Buffer for reading individual JSON objects
     char objBuffer[256];
     int parseCount = 0;
     int errorCount = 0;
-    
+
     while (true) {
       // Read one JSON object from the array
       if (!readNextJsonObject(stream, objBuffer, sizeof(objBuffer))) {
         break; // End of array or error
       }
-      
-      // Parse the small object
+
+      // Parse the small JSON object with filtering
       StaticJsonDocument<256> doc;
-      DeserializationError err = deserializeJson(doc, objBuffer, 
-                                                  DeserializationOption::Filter(filter));
-      
+      DeserializationError err = deserializeJson(
+          doc, objBuffer, DeserializationOption::Filter(filter));
+
       if (err) {
         errorCount++;
-        if (errorCount <= 3) {
+        if (errorCount <= 3) { // Only log first 3 errors to avoid spam
           Serial.printf("SMHI: Parse error: %s\n", err.c_str());
         }
         continue;
       }
-      
+
       DataPoint dp;
       bool parsed = false;
-      
+
       // Hourly format: { "date": 1753318800000, "value": "18.7" }
       if (doc.containsKey("date") && doc.containsKey("value")) {
         uint64_t ms = doc["date"].as<uint64_t>();
@@ -189,49 +243,57 @@ public:
         dp.temp = parseValueToFloat(doc["value"]);
         parsed = true;
       }
-      
+
       if (parsed) {
         weatherData.push_back(dp);
         parseCount++;
-        
+
         // Print progress every 500 entries
         if (parseCount % 500 == 0) {
           Serial.printf("SMHI: Parsed %d entries...\n", parseCount);
         }
       }
     }
-    
-    Serial.printf("SMHI: Finished parsing - %d entries, %d errors\n", 
+
+    Serial.printf("SMHI: Finished parsing - %d entries, %d errors\n",
                   parseCount, errorCount);
-    
+
     return parseCount > 0;
   }
-  
-  bool parseTimeSeriesStream(Stream& stream) {
+
+  /**
+   * Parse Forecast Time Series Data
+   * Used for SMHI forecast API (different format than observation API)
+   *
+   * Format: { "validTime": "2025-01-15T12:00:00Z", "parameters": [...] }
+   */
+  bool parseTimeSeriesStream(Stream &stream) {
     // Find array start
     if (!stream.find("[")) {
       return false;
     }
-    
+
     char objBuffer[2048]; // TimeSeries objects are larger
     int parseCount = 0;
-    
+
     StaticJsonDocument<256> filter;
     filter["validTime"] = true;
     filter["parameters"][0]["name"] = true;
     filter["parameters"][0]["values"][0] = true;
-    
+
     while (readNextJsonObject(stream, objBuffer, sizeof(objBuffer))) {
       DynamicJsonDocument doc(2048);
-      DeserializationError err = deserializeJson(doc, objBuffer,
-                                                  DeserializationOption::Filter(filter));
-      if (err) continue;
-      
+      DeserializationError err = deserializeJson(
+          doc, objBuffer, DeserializationOption::Filter(filter));
+      if (err)
+        continue;
+
       String t = doc["validTime"].as<String>();
-      if (t.length() < 16) continue;
-      
+      if (t.length() < 16)
+        continue;
+
       for (JsonObject p : doc["parameters"].as<JsonArray>()) {
-        const char* name = p["name"] | "";
+        const char *name = p["name"] | "";
         if (strcmp(name, "t") == 0) {
           DataPoint dp;
           dp.date = t.substring(0, 10);
@@ -243,46 +305,61 @@ public:
         }
       }
     }
-    
+
     return parseCount > 0;
   }
 
 private:
   const char *apiUrl;
-  
-  // Read a single JSON object from stream (handles nested braces)
-  bool readNextJsonObject(Stream& stream, char* buffer, size_t bufSize) {
+
+  /**
+   * Read Next JSON Object from Stream
+   *
+   * Reads a single {} object from a JSON array in the stream
+   * Handles nested braces, string escapes, and buffer overflow
+   *
+   * This is the core of the streaming parser - allows processing
+   * huge JSON arrays one object at a time without loading the entire
+   * response into memory
+   *
+   * @param stream HTTP response stream
+   * @param buffer Output buffer for JSON object
+   * @param bufSize Size of output buffer
+   * @return true if object was successfully read, false on end of array or
+   * error
+   */
+  bool readNextJsonObject(Stream &stream, char *buffer, size_t bufSize) {
     size_t pos = 0;
     int braceCount = 0;
     bool started = false;
     bool inString = false;
     bool escaped = false;
     unsigned long timeout = millis() + 10000;
-    
+
     while (millis() < timeout) {
       if (!stream.available()) {
         delay(1);
         continue;
       }
-      
+
       char c = stream.read();
-      
-      // Handle string state (to ignore braces inside strings)
+
+      // Track string state to ignore braces inside string literals
       if (!escaped && c == '"') {
         inString = !inString;
       }
-      escaped = (!escaped && c == '\\');
-      
+      escaped = (!escaped && c == '\\'); // Handle escape sequences
+
       if (!started) {
         if (c == '{') {
           started = true;
           braceCount = 1;
-          if (pos < bufSize - 1) buffer[pos++] = c;
+          if (pos < bufSize - 1)
+            buffer[pos++] = c;
         } else if (c == ']') {
-          // End of array
-          return false;
+          return false; // End of JSONarray
         }
-        // Skip whitespace and commas before object
+        // Skip whitespace and commas before object start
       } else {
         if (pos < bufSize - 1) {
           buffer[pos++] = c;
@@ -292,16 +369,19 @@ private:
             if (stream.available()) {
               char skip = stream.read();
               if (!inString) {
-                if (skip == '{') braceCount++;
-                else if (skip == '}') braceCount--;
+                if (skip == '{')
+                  braceCount++;
+                else if (skip == '}')
+                  braceCount--;
               }
-              if (!escaped && skip == '"') inString = !inString;
+              if (!escaped && skip == '"')
+                inString = !inString;
               escaped = (!escaped && skip == '\\');
             }
           }
           return false;
         }
-        
+
         if (!inString) {
           if (c == '{') {
             braceCount++;
@@ -315,7 +395,7 @@ private:
         }
       }
     }
-    
+
     Serial.println("SMHI: Timeout reading JSON object");
     return false;
   }
