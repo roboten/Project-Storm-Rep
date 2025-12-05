@@ -12,19 +12,36 @@
 #include "stationPicker.hpp"
 #include "weatherIcons.hpp"
 
+// Tile object for 7-day forecast view (defined in project.ino)
 extern lv_obj_t *t2;
 
+/**
+ * Day Forecast Structure
+ * Stores weather forecast for a single day
+ */
 struct DayForecast {
-  String date;      // YYYY-MM-DD
-  String weekday;   // Mon, Tue, etc.
-  float temp;
-  int symb;
+  String date;    // YYYY-MM-DD format
+  String weekday; // Mon, Tue, Wed, etc.
+  float temp;     // Temperature at 12:00 UTC (around noon local time)
+  int symb;       // SMHI Wsymb2 weather symbol code (1-27)
 };
 
+/**
+ * Week Forecast View Class
+ * Fetches and displays 7-day weather forecast from SMHI forecast API
+ * Renders forecast as scrollable horizontal cards showing:
+ * - Weekday name and date
+ * - Weather icon (based on Wsymb2 symbol code)
+ * - Temperature at noon
+ */
 class WeekForecastView {
 public:
   WeekForecastView() : parent(nullptr), row(nullptr), title(nullptr) {}
 
+  /**
+   * Create UI Components
+   * Sets up title label and horizontal scrollable container for forecast cards
+   */
   void create(lv_obj_t *parent_container) {
     parent = parent_container ? parent_container : t2;
     if (!parent)
@@ -48,6 +65,13 @@ public:
     lv_obj_align_to(row, title, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 5);
   }
 
+  /**
+   * Fetch and Render Forecast for Station
+   * Looks up station coordinates and fetches forecast
+   *
+   * @param station_idx Index into gStations vector
+   * @return true if forecast was successfully fetched and rendered
+   */
   bool fetchAndRenderForStationIdx(int station_idx) {
     if (station_idx < 0 || station_idx >= (int)gStations.size())
       return false;
@@ -57,6 +81,14 @@ public:
     return fetchAndRenderForLatLon(lat, lon);
   }
 
+  /**
+   * Fetch and Render Forecast for Coordinates
+   * Fetches 7-day forecast from SMHI pmp3g forecast API
+   *
+   * @param lat Latitude as string
+   * @param lon Longitude as string
+   * @return true if forecast was successfully fetched and rendered
+   */
   bool fetchAndRenderForLatLon(const char *lat, const char *lon) {
     if (!lat || !lon)
       return false;
@@ -111,6 +143,10 @@ private:
   lv_obj_t *title;
   std::vector<DayForecast> days;
 
+  /**
+   * Build SMHI Forecast API URL
+   * Uses pmp3g (Point Multi-Parameter Grib version 3) forecast API
+   */
   static String build_pmp3g_url(const char *lat, const char *lon) {
     String url = "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/"
                  "version/2/geotype/point/lon/";
@@ -121,6 +157,11 @@ private:
     return url;
   }
 
+  /**
+   * Extract Float Parameter from JSON Array
+   * Searches parameter array for a specific parameter name and extracts its
+   * first value
+   */
   static bool param_float(const JsonArray &params, const char *name,
                           float &out) {
     for (JsonObject p : params) {
@@ -134,6 +175,11 @@ private:
     return false;
   }
 
+  /**
+   * Extract Integer Parameter from JSON Array
+   * Searches parameter array for a specific parameter name and extracts its
+   * first value
+   */
   static bool param_int(const JsonArray &params, const char *name, int &out) {
     for (JsonObject p : params) {
       if (strcmp(p["name"] | "", name) == 0) {
@@ -146,6 +192,13 @@ private:
     return false;
   }
 
+  /**
+   * Calculate Weekday Name from Date String
+   * Uses Zeller's congruence algorithm for Gregorian calendar
+   *
+   * @param dateStr Date in YYYY-MM-DD format
+   * @return Weekday abbreviation (Mon, Tue, etc.)
+   */
   static const char *get_weekday_name(const String &dateStr) {
     // Parse YYYY-MM-DD
     int year = dateStr.substring(0, 4).toInt();
@@ -168,6 +221,15 @@ private:
     return names[h];
   }
 
+  /**
+   * Read Next JSON Object from Stream
+   * Similar to smhiApi.hpp but adapted for forecast API format
+   *
+   * @param stream HTTP response stream
+   * @param buffer Output buffer for JSON object
+   * @param bufSize Size of output buffer
+   * @return true if object was successfully read
+   */
   bool readNextObject(Stream &stream, char *buffer, size_t bufSize) {
     size_t pos = 0;
     int braceCount = 0;
@@ -212,9 +274,21 @@ private:
     return false;
   }
 
+  /**
+   * Parse Forecast Time Series Iteratively
+   * Streams through forecast JSON to extract 7 days of noon forecasts
+   *
+   * Filters to only use 12:00 UTC entries (approximately local noon)
+   * Extracts temperature (t) and weather symbol (Wsymb2) parameters
+   *
+   * @param stream HTTP response stream
+   * @return true if at least one day was successfully parsed
+   */
   bool parse_iteratively(Stream &stream) {
+    // Clear previous forecast data
     days.clear();
 
+    // Find start of timeSeries array in the JSON stream
     if (!stream.find("\"timeSeries\"")) {
       Serial.println("WeekForecast: 'timeSeries' not found in stream");
       return false;
@@ -253,7 +327,7 @@ private:
           int hour = vt.substring(11, 13).toInt();
           String date = vt.substring(0, 10);
 
-          // Only take 12:00 UTC entries, and only one per day
+          // Only take 12:00 UTC entries (noon), and only one per day
           if (hour == 12 && date != lastDate) {
             JsonArray params = chunkDoc["parameters"].as<JsonArray>();
             float t = NAN;
@@ -279,11 +353,24 @@ private:
     return !days.empty();
   }
 
+  /**
+   * Clear Forecast Cards
+   * Removes all child objects from the row container
+   */
   void clear_row() {
     if (row)
       lv_obj_clean(row);
   }
 
+  /**
+   * Render Forecast Cards
+   * Creates a card for each day in the forecast with:
+   * - Dark background with rounded corners
+   * - Weekday name (white, large font)
+   * - Date in MM/DD format (gray, smaller font)
+   * - Weather icon (100x100px)
+   * - Temperature (white, large font)
+   */
   void render() {
     if (!parent || !row)
       return;
@@ -309,8 +396,7 @@ private:
 
       // Date (MM/DD format)
       lv_obj_t *dateLabel = lv_label_create(chip);
-      String dateStr =
-          d.date.substring(5, 7) + "/" + d.date.substring(8, 10);
+      String dateStr = d.date.substring(5, 7) + "/" + d.date.substring(8, 10);
       lv_label_set_text(dateLabel, dateStr.c_str());
       lv_obj_set_style_text_font(dateLabel, &lv_font_montserrat_14, 0);
       lv_obj_set_style_text_color(dateLabel, lv_color_hex(0xAAAAAA), 0);
@@ -333,8 +419,16 @@ private:
   }
 };
 
+// Global instance for 7-day forecast view
 static WeekForecastView g_week;
-inline void TodayForecast_CreateOn(lv_obj_t *parent) { g_week.create(parent); }
-inline void TodayForecast_OnStationSelected(int station_idx) {
+
+/**
+ * Public Interface Functions
+ * Called from other parts of the application
+ */
+inline void SevenDayForecast_CreateOn(lv_obj_t *parent) {
+  g_week.create(parent);
+}
+inline void SevenDayForecast_OnStationSelected(int station_idx) {
   g_week.fetchAndRenderForStationIdx(station_idx);
 }
