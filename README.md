@@ -1,17 +1,10 @@
 # PA1484 – Software Development:  Project Storm
 
-Readme-files on GitHub are formatted using Markdown. You can find information about how to format using Markdown here:  
-https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax
-
-Your README file should include the at least the following sections:
-
-
 ## Introduction
 
 PA1484 – Software Development
 
-Introduction
-
+## Introduction
 
 Project Storm is a weather visualization system built for an ESP32-based
 touchscreen device. The system retrieves meteorological data from the
@@ -151,4 +144,4 @@ Screens
 ## License
 
 This project was developed as part of the course
-** PA1484 – Software Development. **
+**PA1484 – Software Development.**
