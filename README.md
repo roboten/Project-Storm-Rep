@@ -2,10 +2,6 @@
 
 ## Introduction
 
-PA1484 – Software Development
-
-## Introduction
-
 Project Storm is a weather visualization system built for an ESP32-based
 touchscreen device. The system retrieves meteorological data from the
 SMHI Open Data API and presents it in a clear, interactive, and
@@ -143,5 +139,8 @@ Screens
 
 ## License
 
-This project was developed as part of the course
-**PA1484 – Software Development.**
+## License
+
+This project is licensed under the **MIT License**.
+
+See the [LICENSE](LICENSE) file for details.
