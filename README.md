@@ -136,8 +136,10 @@ Screens
       selection using a button, so they are automatically selected when I start the device.
 - [x] US4.6: As a user, I want the device to store my default city and weather parameter so
       that they are retained even after a restart.
-
-## License
+- [ ] US5.1: As a user, I want to access a screen to view the weather forecast for all of Sweden.
+- [ ] US5.2: As a user, I want to see the temperature forecast for each administrative area of Sweden (“Landskap”) on a map, with:
+		o A Color-coded temperature zone per each administrative area, using the center of each area to access the forecast.
+		o A looped animation displaying the hourly forecast for the next 24 hours.
 
 ## License
 
